@@ -1,0 +1,15 @@
+torch
+diffusers==0.23.1
+accelerate==0.20.0
+transformers==4.27.0
+absl-py
+ml_collections
+dm-tree
+numpy
+wandb
+pillow
+open-clip-torch
+bert-score
+tqdm
+bitsandbytes
+huggingface-hub==0.16.4

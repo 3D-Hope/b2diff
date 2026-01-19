@@ -1,0 +1,26 @@
+==========================================
+Training started at: 2026-01-19 22:07:16
+Number of GPUs detected: 1
+==========================================
+||=========== round: 0 ===========||
+--config.dev_id 0
+--config.train.save_interval 2 --config.train.num_epochs 2 --config.train.beta1 1 --config.train.beta2 1 --config.train.gradient_accumulation_steps 64 --config.train.learning_rate 0.0001
+--config.sample.num_batches_per_epoch 32 --config.sample.num_steps 20 --config.prompt_file config/prompt/template1_train.json --config.prompt_random_choose 1 --config.split_time 5
+--config.seed 300
+--config.exp_name exp_B2DiffuRL_b5_p3 --config.save_path ./model/lora --config.pretrained.model ./model/stablediffusion/sdv1.4
+--config.run_name stage0 --config.split_step 14 --config.eval.history_cnt 8 --config.eval.pos_threshold 0.5 --config.eval.neg_threshold -0.5
+
+========== seed: 300 ==========
+prompt_embeds torch.Size([8, 77, 768])
+timesteps torch.Size([8, 20])
+log_probs torch.Size([8, 20])
+latents torch.Size([8, 20, 4, 64, 64])
+next_latents torch.Size([8, 20, 4, 64, 64])
+images torch.Size([8, 3, 512, 512])
+-----------0 save image start-----------
+-----------0 save image start-----------
+-----------0 save image start-----------
+-----------0 save image start-----------
+-----------0 save image start-----------
+-----------0 save image start-----------
+-----------0 save image start-----------
