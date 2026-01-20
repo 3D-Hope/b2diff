@@ -98,7 +98,7 @@ echo "STAGE 5: Installing Python dependencies"
 cd /home/pramish_paudel/codes/b2diff
 
 pip install uv
-uv pip install -r requirements.txt.txt || {
+uv pip install -r requirements.txt || {
     echo "❌ Dependency installation failed"
     exit 1
 }
