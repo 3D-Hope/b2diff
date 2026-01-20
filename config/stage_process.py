@@ -43,7 +43,7 @@ def get_config():
     config.pretrained = pretrained = ml_collections.ConfigDict()
     # base model to load. either a path to a local directory, or a model name from the HuggingFace model hub.
     # pretrained.model = "stablediffusionapi/anything-v5"
-    pretrained.model = "./model/stablediffusion/sdv1.4"
+    pretrained.model = "CompVis/stable-diffusion-v1-4"
     # revision of the model to load.
     pretrained.revision = "main"
 
