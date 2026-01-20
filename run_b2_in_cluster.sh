@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=exp_B2DiffuRL_test
-#SBATCH --nodelist=msp3-2
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
