@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=exp_B2DiffuRL_test
-#SBATCH --nodelist=msp3-0
+#SBATCH --nodelist=msp3-2
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem-per-cpu=12G
+#SBATCH --cpus-per-task=4
+#SBATCH --mem-per-cpu=8G
 #SBATCH --time=1-00:00:00
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
