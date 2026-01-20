@@ -1,4 +1,4 @@
-# #!/bin/bash
+#!/bin/bash
 #SBATCH --job-name=exp_B2DiffuRL_test
 #SBATCH --nodelist=msp3-0
 #SBATCH --partition=batch
