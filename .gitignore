@@ -1,1 +1,5 @@
 model/
+logs/
+log/
+__pycache__/
+.vscode/

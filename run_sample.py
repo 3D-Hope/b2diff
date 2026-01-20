@@ -82,7 +82,8 @@ def main(_):
 
     # load scheduler, tokenizer and models.
     ####################################
-    pipeline = StableDiffusionPipeline.from_pretrained(config.pretrained.model, torch_dtype=torch.float16) # float16
+    # pipeline = StableDiffusionPipeline.from_pretrained(config.pretrained.model, torch_dtype=torch.float16) # float16
+    pipeline = StableDiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4", torch_dtype=torch.float16) # float16
     # pipeline = StableDiffusionPipeline.from_single_file(config.pretrained.model, torch_dtype=torch.float16)
     # freeze parameters of models to save more memory
     pipeline.vae.requires_grad_(False)
@@ -298,6 +299,8 @@ def main(_):
                             [latent for latent in latents[k//branch_num]] 
                             for k in range(cur_sample_num*branch_num)
                             ]
+                        
+                        # Not creating random values - it's duplicating the accumulated log_probs from previous timesteps
                         log_probs = [
                             [log_prob for log_prob in log_probs[k//branch_num]] 
                             for k in range(cur_sample_num*branch_num)
