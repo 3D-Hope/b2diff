@@ -75,10 +75,18 @@ def main(_):
     )
 
     accelerator = Accelerator(
-        # log_with="wandb",
+        log_with="wandb",
         mixed_precision=config.mixed_precision,
         project_config=accelerator_config
     )
+
+    # Initialize wandb tracking
+    if accelerator.is_main_process:
+        accelerator.init_trackers(
+            project_name="rl-sampling",
+            config=config.to_dict(),
+            init_kwargs={"wandb": {"name": unique_id+"_"+stage_id}}
+        )
 
     # load scheduler, tokenizer and models.
     ####################################
@@ -366,6 +374,15 @@ def main(_):
 
             global_idx += len(images)
             local_idx += len(images)
+            
+            # Log to wandb
+            if accelerator.is_main_process:
+                accelerator.log({
+                    "sample/batch_idx": idx,
+                    "sample/total_images": global_idx,
+                    "sample/progress": (idx + 1) / config.sample.num_batches_per_epoch,
+                }, step=idx)
+            
             with open(os.path.join(save_dir, f'prompt.json'),'w') as f:
                 json.dump(total_prompts, f)
             with open(os.path.join(save_dir, f'sample.pkl'), 'wb') as f:
@@ -385,6 +402,10 @@ def main(_):
                         "latents": torch.cat([total_samples["latents"], new_samples["latents"]]), 
                         "next_latents": torch.cat([total_samples["next_latents"], new_samples["next_latents"]])
                         }, f)
+    
+    # End wandb tracking
+    if accelerator.is_main_process:
+        accelerator.end_training()
 
 if __name__ == "__main__":
     app.run(main)

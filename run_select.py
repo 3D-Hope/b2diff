@@ -43,7 +43,9 @@ def score_fn1(ground, img_dir, save_dir, config):
             text_features = model.encode_text(text_inputs)
         image_features /= image_features.norm(dim=-1, keepdim=True)
         text_features /= text_features.norm(dim=-1, keepdim=True)
-        similarity.append( (image_features @ text_features.T)[torch.arange(maximum_onetime), torch.arange(maximum_onetime)] )
+        # Fix: use actual batch size instead of maximum_onetime to handle last batch correctly
+        actual_batch_size = len(image_features)
+        similarity.append( (image_features @ text_features.T)[torch.arange(actual_batch_size), torch.arange(actual_batch_size)] )
     similarity = torch.cat(similarity)
 
     R = similarity.cpu().detach()
