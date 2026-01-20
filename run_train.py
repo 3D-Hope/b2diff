@@ -616,7 +616,7 @@ def main(_):
             max_length=pipeline.tokenizer.model_max_length,
         ).input_ids.to(accelerator.device)
     )[0]
-    train_neg_prompt_embeds = neg_prompt_embed.repeat(config.train.batch_size, 1, 1)
+    # train_neg_prompt_embeds = neg_prompt_embed.repeat(config.train.batch_size, 1, 1)
 
     autocast = contextlib.nullcontext if config.use_lora else accelerator.autocast
 
@@ -684,7 +684,9 @@ def main(_):
             GradRecord[epoch].append([])
 
             sample = tree.map_structure(lambda value: value[idx:idx+config.train.batch_size].to(accelerator.device), samples)
-
+            
+            sample_batch_size = sample["prompt_embeds"].shape[0]
+            train_neg_prompt_embeds = neg_prompt_embed.repeat(sample_batch_size, 1, 1)
             # cfg, classifier-free-guidance
             if config.train.cfg:
                 embeds = torch.cat([train_neg_prompt_embeds, sample["prompt_embeds"]])
