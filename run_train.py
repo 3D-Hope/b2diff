@@ -437,7 +437,7 @@ logger = get_logger(__name__)
 def main(_):
     # basic Accelerate and logging setup
     config = FLAGS.config
-
+    print("Starting training")
     torch.cuda.set_device(config.dev_id)
 
     if config.exp_name:
@@ -480,6 +480,7 @@ def main(_):
         mixed_precision=config.mixed_precision,
         project_config=accelerator_config,
         gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps_2,
+        log_with="wandb",
     )
     if accelerator.is_main_process:
         accelerator.init_trackers(
@@ -751,10 +752,42 @@ def main(_):
                 total_norm = None
                 if accelerator.sync_gradients:
                     total_norm = accelerator.clip_grad_norm_(trainable_layers.parameters(), config.train.max_grad_norm)
-                LossRecord[epoch][idx//config.train.batch_size].append(loss.cpu().item())
-                GradRecord[epoch][idx//config.train.batch_size].append(total_norm.cpu().item() if total_norm is not None else None)
+                
+                loss_value = loss.cpu().item()
+                grad_value = total_norm.cpu().item() if total_norm is not None else None
+                
+                LossRecord[epoch][idx//config.train.batch_size].append(loss_value)
+                GradRecord[epoch][idx//config.train.batch_size].append(grad_value)
+                
+                # Log to wandb
+                if accelerator.is_main_process:
+                    global_step = epoch * (total_batch_size // config.train.batch_size) + (idx // config.train.batch_size)
+                    log_dict = {
+                        "train/loss": loss_value,
+                        "train/epoch": epoch,
+                        "train/learning_rate": optimizer.param_groups[0]['lr'],
+                        "train/batch_idx": idx // config.train.batch_size,
+                        "train/eval_score_mean": evaluation_score.mean().cpu().item(),
+                        "train/eval_score_std": evaluation_score.std().cpu().item(),
+                        "train/ratio_mean": ratio.mean().cpu().item(),
+                    }
+                    if grad_value is not None:
+                        log_dict["train/grad_norm"] = grad_value
+                    accelerator.log(log_dict, step=global_step)
+                
                 optimizer.step()
                 optimizer.zero_grad()
+        
+        # Log epoch summary
+        if accelerator.is_main_process:
+            epoch_losses = [item for sublist in LossRecord[epoch] for item in sublist]
+            epoch_grads = [item for sublist in GradRecord[epoch] for item in sublist if item is not None]
+            accelerator.log({
+                "train/epoch_loss_mean": sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0,
+                "train/epoch_loss_std": (sum((x - sum(epoch_losses) / len(epoch_losses))**2 for x in epoch_losses) / len(epoch_losses))**0.5 if epoch_losses else 0,
+                "train/epoch_grad_mean": sum(epoch_grads) / len(epoch_grads) if epoch_grads else 0,
+                "train/epoch_completed": epoch + 1,
+            }, step=epoch)
                 
         if (epoch+1) % config.train.save_interval == 0 :
             accelerator.save_state()

@@ -81,10 +81,10 @@ def score_fn1(ground, img_dir, save_dir, config):
     history_data.append(cur_data)
     if len(history_data) > config.eval.history_cnt:
         history_data = history_data[-config.eval.history_cnt:]
-    print("==== history_scores ====")
-    for k,v in combine_data.items():
-        print(k, v.shape)
-    print('history data length', len(history_data))
+    # print("==== history_scores ====")
+    # for k,v in combine_data.items():
+    #     print(k, v.shape)
+    # print('history data length', len(history_data))
     with open(os.path.join(config.save_path, unique_id, 'history_scores.pkl'), 'wb') as f:
         pickle.dump(history_data, f)
 
@@ -100,7 +100,7 @@ def score_fn1(ground, img_dir, save_dir, config):
 def main(_):
     # basic Accelerate and logging setup
     config = FLAGS.config
-
+    print("Starting reward calculation")
     torch.cuda.set_device(config.dev_id)
     seed_everything(config.seed)
 
@@ -177,9 +177,9 @@ def main(_):
     if len(data.keys()) != 0:
         data = {k:torch.stack(v, dim=0) for k,v in data.items()}
 
-    print("train_data.shape:")
-    for k,v in data.items():
-        print(f"{k}:", v.shape)
+    # print("train_data.shape:")
+    # for k,v in data.items():
+    #     print(f"{k}:", v.shape)
 
     with open(os.path.join(save_dir, 'sample_stage.pkl'), 'wb') as f:
         pickle.dump(data, f)

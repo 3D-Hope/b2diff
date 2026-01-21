@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=exp_B2DiffuRL_test
+#SBATCH --job-name=b2diffu_rl_b8
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
@@ -136,11 +136,11 @@ SaveInterval=2
 SavePath="./model/lora"
 PromptFile="config/prompt/template1_train.json"
 RandomPrompt=1
-ExpName="exp_B2DiffuRL_test"
+ExpName="b2diffu_rl_b8"
 Seed=300
 Beta1=1
 Beta2=1
-BatchCnt=1 # was 32
+BatchCnt=32 # was 32
 StageCnt=100
 SplitStepLeft=14
 SplitStepRight=20
