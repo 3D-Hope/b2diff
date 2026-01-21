@@ -115,6 +115,7 @@ echo "STAGE 10: Starting training"
 
 export PYTHONUNBUFFERED=1
 export DISPLAY=:0
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True 
 
 START_TIME=$(date +%s)
 START_TIME_READABLE=$(date '+%Y-%m-%d %H:%M:%S')

@@ -16,7 +16,7 @@ def get_config():
     # mixed precision training. options are "fp16", "bf16", and "no". half-precision speeds up training significantly.
     config.mixed_precision = "fp16" # "fp16"
     # allow tf32 on Ampere GPUs, which can speed up training.
-    config.allow_tf32 = True # False # True
+    config.allow_tf32 = False # False # True
     # whether or not to use LoRA. LoRA reduces memory usage significantly by injecting small weight matrices into the
     # attention layers of the UNet. with LoRA, fp16, and a batch size of 1, finetuning Stable Diffusion should take
     # about 10GB of GPU memory. beware that if LoRA is disabled, training will take a lot of memory and saved checkpoint
@@ -61,7 +61,7 @@ def get_config():
     # being fully deterministic and 1.0 being equivalent to the DDPM sampler.
     sample.eta = 1.0
     # batch size
-    sample.batch_size = 1
+    sample.batch_size = 8
     # number of batches to sample per epoch. the total number of samples per epoch is `num_batches_per_epoch *
     # batch_size * num_gpus`.
     sample.num_batches_per_epoch = 10
@@ -71,7 +71,7 @@ def get_config():
     ###### Training ######
     config.train = train = ml_collections.ConfigDict()
     # batch size (per GPU!) to use for training.
-    train.batch_size = 1
+    train.batch_size = 8
     # whether to use the 8bit Adam optimizer from bitsandbytes.
     train.use_8bit_adam = False
     # learning rate.
