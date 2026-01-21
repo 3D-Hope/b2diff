@@ -69,3 +69,10 @@ def inception_score(inception_model, imgs, cuda=True, batch_size=32, resize=Fals
         split_scores.append(np.exp(np.mean(scores)))
 
     return np.mean(split_scores), np.std(split_scores)
+
+
+
+
+if __name__ == "__main__":
+    # score = inception_score()
+    pass

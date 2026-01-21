@@ -109,7 +109,7 @@ def main(_):
     )
     # switch to DDIM scheduler
     pipeline.scheduler = DDIMScheduler.from_config(pipeline.scheduler.config)
-    total_image_num_per_gpu = config.sample.batch_size * config.sample.num_batches_per_epoch
+    # total_image_num_per_gpu = config.sample.batch_size * config.sample.num_batches_per_epoch
     
     # For mixed precision training we cast all non-trainable weigths (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.

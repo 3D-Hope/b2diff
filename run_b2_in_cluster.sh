@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH --job-name=b2diffu_rl_b8
+#SBATCH --job-name=b2diffu_rl_b8_resume_30
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
-#SBATCH --time=1-00:00:00
+#SBATCH --time=2-00:00:00
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
 
@@ -171,7 +171,8 @@ SELECT_FLAGS=""
 # ------------------------------------------------------------------------------
 # Main loop
 # ------------------------------------------------------------------------------
-for ((i=0; i<StageCnt; i++)); do
+continue_from_stage=30 # Note: should be 0 when starting fresh
+for ((i=continue_from_stage; i<StageCnt; i++)); do
     interval=$((SplitStepRight - SplitStepLeft + 1))
     level=$((i * interval / StageCnt))
     cur_split_step=$((level + SplitStepLeft))
