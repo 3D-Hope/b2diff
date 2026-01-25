@@ -43,7 +43,7 @@ NumStep=20
 History_Cnt=8
 PosThreshold=0.5
 NegThreshold=-0.5
-SplitTime=5
+SplitTime=3
 Dev_Id=0
 
 CUDA_FALGS="--config.dev_id ${Dev_Id}"

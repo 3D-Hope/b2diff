@@ -1,0 +1,101 @@
+# Main configuration file for B2Diff training pipeline
+# This replaces the bash script configuration with a Hydra-based approach
+
+defaults:
+  - _self_
+
+# General settings
+exp_name: "b2diffu_rl"
+seed: 300
+save_path: "./model/lora"
+mixed_precision: "fp16"
+allow_tf32: false
+use_lora: true
+resume_from: ""
+dev_id: 0
+
+# Pipeline settings (from bash script)
+pipeline:
+  continue_from_stage: 0
+  stage_cnt: 100
+  split_step_left: 14
+  split_step_right: 20
+  save_interval: 2
+  sleep_between_stages: 2
+
+# Split settings (will be calculated per stage)
+split_step: 14
+split_time: 3
+
+# Prompt settings
+prompt: ""
+prompt_file: "configs/prompt/template1_train.json"
+prompt_random_choose: 1
+
+# Pretrained model
+pretrained:
+  model: "CompVis/stable-diffusion-v1-4"
+  revision: "main"
+
+# Sampling configuration
+sample:
+  num_steps: 20
+  cfg: true
+  guidance_scale: 5.0
+  beta: 1.0
+  eta: 1.0
+  batch_size: 16
+  num_batches_per_epoch: 16
+  save_interval: 2
+
+# Training configuration
+train:
+  batch_size: 8
+  use_8bit_adam: false
+  learning_rate: 0.0001
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_weight_decay: 0.0001
+  adam_epsilon: 0.00000001
+  gradient_accumulation_steps: 8
+  max_grad_norm: 1.0
+  num_inner_epochs: 1
+  cfg: true
+  timestep_fraction: 1.0
+  alpha: 1.0
+  beta: 0
+  beta1: 1
+  beta2: 1
+  eps: 0.1
+  num_epochs: 2
+  adv_clip_max: 5
+  save_interval: 2
+  num_checkpoint_limit: 21
+
+# Evaluation & Selection configuration
+eval:
+  pos_threshold: 0.5  # PosThreshold from bash script
+  neg_threshold: -0.5  # NegThreshold from bash script
+  history_cnt: 8  # History_Cnt from bash script
+
+# Wandb configuration
+# Single run tracks all stages with hierarchical logging:
+# - stage/index, stage/time_seconds
+# - sampling/stage_X/* (per-stage sampling metrics)
+# - rewards/stage_X/* (raw & normalized scores, mean/std per prompt)
+# - selection/stage_X/* (num selected, pos/neg counts)
+# - training/stage_X/* (loss, gradients per stage)
+# - pipeline/* (overall progress, total time)
+wandb:
+  entity: "pramish-paudel-insait"
+  project: "b2diff"  # Single run for entire pipeline
+  enabled: true
+  log_model: false
+
+# Hydra configuration
+hydra:
+  run:
+    dir: logs/${exp_name}/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: logs/${exp_name}
+    subdir: ${hydra.job.num}

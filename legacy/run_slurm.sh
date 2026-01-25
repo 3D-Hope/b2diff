@@ -19,7 +19,7 @@ trap 'echo "🛑 Job interrupted"; exit 130' INT
 # CONFIGURATION - Modify these variables as needed
 # ============================================================================
 # Set your wandb API key here or pass via environment variable
-WANDB_ENTITY="${WANDB_ENTITY:-078bct021-ashok-d}"
+WANDB_ENTITY="${WANDB_ENTITY:-pramish-paudel-insait}"
 
 # Project directory (adjust to your actual path)
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"

@@ -1,0 +1,347 @@
+"""
+Core training module for B2Diff training pipeline.
+Extracts the training logic from run_train.py into a callable function.
+"""
+
+import os
+import torch
+import contextlib
+import copy
+import json
+import tree
+from functools import partial
+from tqdm import tqdm as tqdm_lib
+from accelerate import Accelerator
+from accelerate.utils import ProjectConfiguration
+from accelerate.logging import get_logger
+from diffusers import StableDiffusionPipeline, DDIMScheduler, UNet2DConditionModel
+from diffusers.loaders import AttnProcsLayers
+from diffusers.models.attention_processor import LoRAAttnProcessor
+from diffusion.ddim_with_logprob import ddim_step_with_logprob
+from utils.utils import load_sample_stage, seed_everything
+
+tqdm = partial(tqdm_lib, dynamic_ncols=True)
+logger = get_logger(__name__)
+
+
+def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, pipeline=None, trainable_layers=None):
+    """
+    Run the training phase for a given stage.
+    
+    Args:
+        config: Configuration object (can be OmegaConf or dict)
+        stage_idx: Current stage index (optional, for logging)
+        external_logger: External logger instance (optional)
+        wandb_run: Existing wandb run to log to (optional)
+        pipeline: Pre-loaded StableDiffusionPipeline (avoids reloading)
+        trainable_layers: Pre-initialized trainable layers
+        
+    Returns:
+        save_dir: Directory where checkpoints were saved
+    """
+    # Convert OmegaConf to dict if needed
+    if hasattr(config, 'to_dict'):
+        config_dict = config.to_dict()
+    else:
+        config_dict = config
+        
+    if external_logger:
+        external_logger.info(f"Starting training for stage {stage_idx}")
+    else:
+        print(f"Starting training for stage {stage_idx}")
+    
+    print("Starting training")
+    torch.cuda.set_device(config.dev_id)
+    
+    # Setup directories
+    unique_id = config.exp_name
+    os.makedirs(os.path.join(config.save_path, unique_id), exist_ok=True)
+    
+    stage_id = f"stage{stage_idx}"
+    save_dir = os.path.join(config.save_path, unique_id, stage_id)
+    
+    # Use pre-loaded pipeline (no reloading!)
+    if pipeline is None or trainable_layers is None:
+        raise ValueError("Pipeline and trainable_layers must be provided - should not reload model each stage!")
+    
+    num_train_timesteps_2 = int(config.split_step * config.train.timestep_fraction)
+    
+    # Setup accelerator (per-stage, with correct gradient_accumulation_steps)
+    accelerator_config = ProjectConfiguration(
+        project_dir=save_dir,
+        automatic_checkpoint_naming=True,
+        total_limit=config.train.num_checkpoint_limit,
+    )
+    
+    accelerator = Accelerator(
+        mixed_precision=config.mixed_precision,
+        project_config=accelerator_config,
+        gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps_2,
+    )
+    
+    # IMPORTANT: Do NOT use log_with="wandb" - prevents separate run creation
+    # All logging goes through the parent pipeline's wandb_run
+    
+    logger.info(f"\n{config}")
+    seed_everything(config.seed)
+    
+    # Setup inference dtype
+    inference_dtype = torch.float32
+    if accelerator.mixed_precision == "fp16":
+        inference_dtype = torch.float16
+    elif accelerator.mixed_precision == "bf16":
+        inference_dtype = torch.bfloat16
+    
+    # Setup save/load hooks for checkpointing (using original pattern)
+    def save_model_hook(models, weights, output_dir):
+        assert len(models) == 1
+        if config.use_lora and isinstance(models[0], AttnProcsLayers):
+            pipeline.unet.save_attn_procs(output_dir)
+        elif not config.use_lora and isinstance(models[0], UNet2DConditionModel):
+            models[0].save_pretrained(os.path.join(output_dir, "unet"))
+        else:
+            raise ValueError(f"Unknown model type {type(models[0])}")
+        weights.pop()
+    
+    def load_model_hook(models, input_dir):
+        assert len(models) == 1
+        if config.use_lora and isinstance(models[0], AttnProcsLayers):
+            tmp_unet = UNet2DConditionModel.from_pretrained(
+                config.pretrained.model, revision=config.pretrained.revision, subfolder="unet"
+            )
+            tmp_unet.load_attn_procs(input_dir)
+            models[0].load_state_dict(AttnProcsLayers(tmp_unet.attn_processors).state_dict())
+            del tmp_unet
+        elif not config.use_lora and isinstance(models[0], UNet2DConditionModel):
+            load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
+            models[0].register_to_config(**load_model.config)
+            models[0].load_state_dict(load_model.state_dict())
+            del load_model
+        else:
+            raise ValueError(f"Unknown model type {type(models[0])}")
+        models.pop()
+    
+    accelerator.register_save_state_pre_hook(save_model_hook)
+    accelerator.register_load_state_pre_hook(load_model_hook)
+    
+    if config.allow_tf32:
+        torch.backends.cuda.matmul.allow_tf32 = True
+    
+    # Initialize optimizer
+    if config.train.use_8bit_adam:
+        try:
+            import bitsandbytes as bnb
+        except ImportError:
+            raise ImportError("Please install bitsandbytes to use 8-bit Adam.")
+        optimizer_cls = bnb.optim.AdamW8bit
+    else:
+        optimizer_cls = torch.optim.AdamW
+    
+    optimizer = optimizer_cls(
+        trainable_layers.parameters(),
+        lr=config.train.learning_rate,
+        betas=(config.train.adam_beta1, config.train.adam_beta2),
+        weight_decay=config.train.adam_weight_decay,
+        eps=config.train.adam_epsilon,
+    )
+    
+    # Generate negative prompt embeddings
+    neg_prompt_embed = pipeline.text_encoder(
+        pipeline.tokenizer(
+            [""],
+            return_tensors="pt",
+            padding="max_length",
+            truncation=True,
+            max_length=pipeline.tokenizer.model_max_length,
+        ).input_ids.to(accelerator.device)
+    )[0]
+    
+    autocast = contextlib.nullcontext if config.use_lora else accelerator.autocast
+    
+    # Prepare everything with accelerator
+    trainable_layers, optimizer = accelerator.prepare(trainable_layers, optimizer)
+    
+    # Log training info
+    samples_per_epoch = config.sample.batch_size * accelerator.num_processes * config.sample.num_batches_per_epoch
+    total_train_batch_size = (
+        config.train.batch_size * accelerator.num_processes * config.train.gradient_accumulation_steps
+    )
+    
+    logger.info("***** Running training *****")
+    logger.info(f"  Num Epochs = {config.train.num_epochs}")
+    logger.info(f"  Sample batch size per device = {config.sample.batch_size}")
+    logger.info(f"  Train batch size per device = {config.train.batch_size}")
+    logger.info(f"  Gradient Accumulation steps = {config.train.gradient_accumulation_steps}")
+    logger.info(f"  Total number of samples per epoch = {samples_per_epoch}")
+    logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_train_batch_size}")
+    logger.info(f"  Number of gradient updates per inner epoch = {samples_per_epoch // total_train_batch_size}")
+    logger.info(f"  Number of inner epochs = {config.train.num_inner_epochs}")
+    
+    assert config.sample.batch_size >= config.train.batch_size
+    assert config.sample.batch_size % config.train.batch_size == 0
+    
+    # No checkpoint loading - model stays in memory across stages!
+    # if config.resume_from:
+    #     logger.info(f"Resuming from {config.resume_from}")
+    #     accelerator.load_state(config.resume_from)
+    
+    # Load sample data
+    samples = load_sample_stage(save_dir)
+    accelerator.save_state()
+    
+    pipeline.scheduler.set_timesteps(config.sample.num_steps, device=accelerator.device)
+    init_samples = copy.deepcopy(samples)
+    LossRecord = []
+    GradRecord = []
+    
+    # Training loop
+    for epoch in range(config.train.num_epochs):
+        # Shuffle samples along batch dimension
+        samples = {}
+        LossRecord.append([])
+        GradRecord.append([])
+        
+        total_batch_size = init_samples["eval_scores"].shape[0]
+        perm = torch.randperm(total_batch_size)
+        samples = {k: v[perm] for k, v in init_samples.items()}
+        
+        # Shuffle timesteps
+        perms = torch.stack(
+            [torch.randperm(init_samples["timesteps"].shape[1]) for _ in range(total_batch_size)]
+        )
+        for key in ["latents", "next_latents", "log_probs", "timesteps"]:
+            samples[key] = samples[key][torch.arange(total_batch_size)[:, None], perms]
+        
+        # Training
+        pipeline.unet.train()
+        for idx in tqdm(
+            range(0, total_batch_size // 2 * 2, config.train.batch_size),
+            desc="Update",
+            position=2,
+            leave=False,
+        ):
+            LossRecord[epoch].append([])
+            GradRecord[epoch].append([])
+            
+            sample = tree.map_structure(lambda value: value[idx:idx + config.train.batch_size].to(accelerator.device), samples)
+            
+            sample_batch_size = sample["prompt_embeds"].shape[0]
+            train_neg_prompt_embeds = neg_prompt_embed.repeat(sample_batch_size, 1, 1)
+            
+            # cfg, classifier-free-guidance
+            if config.train.cfg:
+                embeds = torch.cat([train_neg_prompt_embeds, sample["prompt_embeds"]])
+            else:
+                embeds = sample["prompt_embeds"]
+            
+            for t in tqdm(
+                range(sample["timesteps"].shape[1]),
+                desc="Timestep",
+                position=3,
+                leave=False,
+                disable=not accelerator.is_local_main_process,
+            ):
+                evaluation_score = sample["eval_scores"][:]
+                
+                with accelerator.accumulate(pipeline.unet):
+                    with autocast():
+                        if config.train.cfg:
+                            noise_pred = pipeline.unet(
+                                torch.cat([sample["latents"][:, t]] * 2),
+                                torch.cat([sample["timesteps"][:, t]] * 2),
+                                embeds,
+                            ).sample
+                            
+                            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                            noise_pred = noise_pred_uncond + config.sample.guidance_scale * (noise_pred_text - noise_pred_uncond)
+                        else:
+                            noise_pred = pipeline.unet(
+                                sample["latents"][:, t], sample["timesteps"][:, t], embeds
+                            ).sample
+                        
+                        _, total_prob, _ = ddim_step_with_logprob(
+                            pipeline.scheduler,
+                            noise_pred,
+                            sample["timesteps"][:, t],
+                            sample["latents"][:, t],
+                            eta=config.sample.eta,
+                            prev_sample=sample["next_latents"][:, t],
+                        )
+                        total_ref_prob = sample["log_probs"][:, t]
+                        
+                        ratio = torch.exp(total_prob - total_ref_prob)
+                        temp_beta1 = torch.ones_like(evaluation_score) * config.train.beta1
+                        temp_beta2 = torch.ones_like(evaluation_score) * config.train.beta2
+                        sample_weight = torch.where(evaluation_score > 0, temp_beta1, temp_beta2)
+                        advantages = torch.clamp(
+                            evaluation_score,
+                            -config.train.adv_clip_max,
+                            config.train.adv_clip_max,
+                        ) * sample_weight
+                        unclipped_loss = -advantages * ratio
+                        clipped_loss = -advantages * torch.clamp(
+                            ratio,
+                            1.0 - config.train.eps,
+                            1.0 + config.train.eps,
+                        )
+                        loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
+                    
+                    accelerator.backward(loss)
+                    total_norm = None
+                    if accelerator.sync_gradients:
+                        total_norm = accelerator.clip_grad_norm_(trainable_layers.parameters(), config.train.max_grad_norm)
+                    
+                    loss_value = loss.cpu().item()
+                    grad_value = total_norm.cpu().item() if total_norm is not None else None
+                    
+                    LossRecord[epoch][idx // config.train.batch_size].append(loss_value)
+                    GradRecord[epoch][idx // config.train.batch_size].append(grad_value)
+                    
+                    # Log to wandb
+                    if wandb_run and accelerator.is_main_process:
+                        log_dict = {
+                            "train/loss": loss_value,
+                            "train/epoch": epoch,
+                            "train/learning_rate": optimizer.param_groups[0]['lr'],
+                            "train/batch_idx": idx // config.train.batch_size,
+                            "train/eval_score_mean": evaluation_score.mean().cpu().item(),
+                            "train/eval_score_std": evaluation_score.std().cpu().item(),
+                            "train/ratio_mean": ratio.mean().cpu().item(),
+                        }
+                        if grad_value is not None:
+                            log_dict["train/grad_norm"] = grad_value
+                        wandb_run.log(log_dict)
+                    
+                    optimizer.step()
+                    optimizer.zero_grad()
+        
+        # Log epoch summary
+        if accelerator.is_main_process:
+            logger.info(f"Epoch {epoch + 1}/{config.train.num_epochs} completed")
+            
+            # Log epoch-level metrics
+            if wandb_run:
+                epoch_losses = [item for sublist in LossRecord[epoch] for item in sublist]
+                epoch_grads = [item for sublist in GradRecord[epoch] for item in sublist if item is not None]
+                wandb_run.log({
+                    "train/epoch_loss_mean": sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0,
+                    "train/epoch_loss_std": (sum((x - sum(epoch_losses) / len(epoch_losses))**2 for x in epoch_losses) / len(epoch_losses))**0.5 if epoch_losses else 0,
+                    "train/epoch_grad_mean": sum(epoch_grads) / len(epoch_grads) if epoch_grads else 0,
+                    "train/epoch_completed": epoch + 1,
+                })
+        
+        # Save checkpoint
+        if (epoch + 1) % config.train.save_interval == 0:
+            accelerator.save_state()
+    
+    # Save final metrics
+    os.makedirs(os.path.join(save_dir, 'eval'), exist_ok=True)
+    with open(os.path.join(save_dir, 'eval', 'loss.json'), 'w') as f:
+        json.dump(LossRecord, f)
+    with open(os.path.join(save_dir, 'eval', 'grad.json'), 'w') as f:
+        json.dump(GradRecord, f)
+    
+    if external_logger:
+        external_logger.info(f"Training completed for stage {stage_idx}")
+    
+    return save_dir
