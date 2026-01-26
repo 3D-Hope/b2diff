@@ -76,6 +76,9 @@ class TrainingPipeline:
             'stage_duration': [],  # Time taken per stage
         }
         
+        # Track incremental training timestep history (cumulative across ranges)
+        self._inc_training_timesteps = set()
+        
         # Setup directories
         self.setup_directories()
         
@@ -279,6 +282,48 @@ class TrainingPipeline:
         logger.info(f"Split step: {stage_config.split_step}")
         logger.info(f"Seed: {stage_config.seed}")
         
+        # Compute incremental training timesteps if enabled
+        training_timestep_indices = None
+        if getattr(self.config.train, 'incremental_training', False):
+            import numpy as np
+            total_timesteps = int(self.config.sample.num_steps)
+            # Avoid using index 0 if desired (offset of 1) by starting from 1
+            start_idx = 0  # set to 1 if you need to skip 0 globally
+            candidate_indices = np.arange(start_idx, total_timesteps)
+            
+            # Determine target count by stage range
+            if stage_idx < 15:
+                target_count = 5
+            elif stage_idx < 30:
+                target_count = 10
+            elif stage_idx < 45:
+                target_count = 15
+            else:
+                target_count = total_timesteps
+            
+            if target_count < total_timesteps:
+                # Add uniformly spaced new indices until reaching target_count
+                if len(self._inc_training_timesteps) == 0:
+                    # First fill: uniform spacing over candidate range
+                    indices = np.linspace(0, len(candidate_indices) - 1, target_count).round().astype(int)
+                    new_idxs = set(candidate_indices[indices].tolist())
+                    self._inc_training_timesteps.update(new_idxs)
+                else:
+                    # Add more uniformly from remaining
+                    remaining = sorted(list(set(candidate_indices.tolist()) - self._inc_training_timesteps))
+                    num_to_add = max(0, target_count - len(self._inc_training_timesteps))
+                    if num_to_add > 0 and len(remaining) > 0:
+                        indices = np.linspace(0, len(remaining) - 1, num_to_add).round().astype(int)
+                        new_idxs = set([remaining[i] for i in indices])
+                        self._inc_training_timesteps.update(new_idxs)
+                training_timestep_indices = sorted(list(self._inc_training_timesteps))
+            else:
+                # Use all timesteps
+                self._inc_training_timesteps = set(candidate_indices.tolist())
+                training_timestep_indices = sorted(list(self._inc_training_timesteps))
+            
+            logger.info(f"Incremental training timesteps ({len(training_timestep_indices)}/{total_timesteps}): {training_timestep_indices}")
+        
         try:
             # Step 1: Sampling
             logger.info(f"[{stage_idx}] Running sampling...")
@@ -304,7 +349,8 @@ class TrainingPipeline:
                 stage_config, stage_idx, logger, 
                 wandb_run=self.wandb_run,
                 pipeline=self.pipeline,
-                trainable_layers=self.trainable_layers
+                trainable_layers=self.trainable_layers,
+                training_timesteps=training_timestep_indices
             )
             logger.info(f"[{stage_idx}] Training completed")
             

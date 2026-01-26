@@ -12,7 +12,7 @@ import open_clip
 # Configuration
 CONFIG = {
     "prompt_file": "config/prompt/template1_train.json",
-    "output_dir": "outputs/baseline_sd14_samples",
+    "output_dir": "outputs/baseline_sd14_samples_10steps",
     "base_model": "CompVis/stable-diffusion-v1-4",
     "batch_size": 8,
     "num_inference_steps": 20,

@@ -24,7 +24,7 @@ tqdm = partial(tqdm_lib, dynamic_ncols=True)
 logger = get_logger(__name__)
 
 
-def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, pipeline=None, trainable_layers=None):
+def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, pipeline=None, trainable_layers=None, training_timesteps=None):
     """
     Run the training phase for a given stage.
     
@@ -64,7 +64,11 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     if pipeline is None or trainable_layers is None:
         raise ValueError("Pipeline and trainable_layers must be provided - should not reload model each stage!")
     
-    num_train_timesteps_2 = int(config.split_step * config.train.timestep_fraction)
+    # Determine effective number of training timesteps for gradient accumulation
+    if getattr(config.train, 'incremental_training', False) and training_timesteps is not None:
+        num_train_timesteps_2 = int(len(training_timesteps))
+    else:
+        num_train_timesteps_2 = int(config.split_step * config.train.timestep_fraction)
     
     # Setup accelerator (per-stage, with correct gradient_accumulation_steps)
     accelerator_config = ProjectConfiguration(
@@ -234,8 +238,16 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
             else:
                 embeds = sample["prompt_embeds"]
             
+            # Determine which timestep indices to train on
+            if getattr(config.train, 'incremental_training', False) and training_timesteps is not None:
+                timestep_indices = training_timesteps
+                if external_logger and accelerator.is_local_main_process and idx == 0:
+                    external_logger.info(f"Training on {len(timestep_indices)}/{sample['timesteps'].shape[1]} timesteps: {timestep_indices}")
+            else:
+                timestep_indices = range(sample["timesteps"].shape[1])
+
             for t in tqdm(
-                range(sample["timesteps"].shape[1]),
+                timestep_indices,
                 desc="Timestep",
                 position=3,
                 leave=False,

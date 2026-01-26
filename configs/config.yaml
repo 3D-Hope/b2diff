@@ -5,7 +5,7 @@ defaults:
   - _self_
 
 # General settings
-exp_name: "b2diffu_rl"
+exp_name: "incremental_b2diffu_rl"
 seed: 42
 save_path: "./model/lora"
 mixed_precision: "fp16"
@@ -71,6 +71,7 @@ train:
   adv_clip_max: 5
   save_interval: 2
   num_checkpoint_limit: 21
+  incremental_training: true
 
 # Evaluation & Selection configuration
 eval:

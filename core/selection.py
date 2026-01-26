@@ -212,8 +212,14 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
             for k, v in samples.items()
         }
         
-        t_left = config.sample.num_steps - config.split_step
-        t_right = config.sample.num_steps
+        # When incremental training is enabled, keep the full trajectory
+        # Otherwise, preserve original behavior (use last `split_step` timesteps)
+        if hasattr(config, 'train') and getattr(config.train, 'incremental_training', False):
+            t_left = 0
+            t_right = config.sample.num_steps
+        else:
+            t_left = config.sample.num_steps - config.split_step
+            t_right = config.sample.num_steps
         
         prompt_embeds = batch_samples['prompt_embeds'][torch.arange(0, data_size, cur_sample_num)]
         timesteps = batch_samples['timesteps'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
