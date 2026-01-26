@@ -25,7 +25,7 @@ from utils.utils import post_processing, seed_everything
 tqdm = partial(tqdm_lib, dynamic_ncols=True)
 
 
-def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=None, trainable_layers=None):
+def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=None, trainable_layers=None, sampling_timestep_indices=None):
     """
     Run the sampling phase for a given stage.
     
@@ -36,6 +36,7 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
         wandb_run: Existing wandb run to log to (optional)
         pipeline: Pre-loaded StableDiffusionPipeline (avoids reloading)
         trainable_layers: Pre-initialized trainable layers
+        sampling_timestep_indices: List of timestep indices to use for sampling (optional)
         
     Returns:
         save_dir: Directory where samples were saved
@@ -120,11 +121,26 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
         getattr(config.train, 'incremental_training', False)
     )
     
+    # Detect incremental timestep sampling mode
+    sample_incremental_mode = (
+        sampling_timestep_indices is not None and
+        hasattr(config, 'train') and 
+        getattr(config.train, 'sample_incremental_steps_only', False) and
+        getattr(config.train, 'incremental_training', False) and
+        getattr(config.train, 'no_branching', False)
+    )
+    
     if no_branching_mode:
         if logger:
             logger.info("Running in NO-BRANCHING mode: single trajectory per sample (no splits)")
         else:
             print("Running in NO-BRANCHING mode: single trajectory per sample (no splits)")
+    
+    if sample_incremental_mode:
+        if logger:
+            logger.info(f"Running in INCREMENTAL SAMPLING mode: using {len(sampling_timestep_indices)} timesteps")
+        else:
+            print(f"Running in INCREMENTAL SAMPLING mode: using {len(sampling_timestep_indices)} timesteps")
     
     # SAMPLING LOOP
     pipeline.unet.eval()
@@ -134,13 +150,15 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
     
     # Adjust number of batches: in no-branching mode, generate 2x batches to compensate
     # for lack of branching (which normally multiplies by split_time)
+    # Incremental sampling just makes generation faster, but still needs same sample count
     effective_num_batches = config.sample.num_batches_per_epoch
     if no_branching_mode:
         effective_num_batches = config.sample.num_batches_per_epoch * 2
         if logger:
-            logger.info(f"No-branching: generating {effective_num_batches} batches (2x) to compensate for no splits")
+            mode_str = "Incremental" if sample_incremental_mode else "No-branching"
+            logger.info(f"{mode_str} mode: generating {effective_num_batches} batches (2x) to compensate for no splits")
         else:
-            print(f"No-branching: generating {effective_num_batches} batches (2x) to compensate for no splits")
+            print(f"No-branching mode: generating {effective_num_batches} batches (2x) to compensate for no splits")
     
     total_prompts = []
     total_samples = None
@@ -224,6 +242,18 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
         
         pipeline.scheduler.set_timesteps(config.sample.num_steps, device=accelerator.device)
         ts = pipeline.scheduler.timesteps
+        
+        # Filter timesteps if in incremental sampling mode
+        if sample_incremental_mode:
+            # sampling_timestep_indices are step indices (e.g., [0, 5, 10, 15, 19])
+            # Convert to actual timesteps by indexing into ts
+            ts = ts[sampling_timestep_indices]
+            effective_num_steps = len(ts)
+            if logger:
+                logger.info(f"Filtered to {effective_num_steps} timesteps: {ts.tolist()}")
+        else:
+            effective_num_steps = config.sample.num_steps
+        
         extra_step_kwargs = pipeline.prepare_extra_step_kwargs(None, config.sample.eta)
         
         latents = [[noise_latents1]]
@@ -281,13 +311,13 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
         total_prompts.extend(prompts1*sample_num)
 
         for k in range(sample_num): 
-            images = latents_decode(pipeline, latents[k][config.sample.num_steps], accelerator.device, prompt_embeds1.dtype)
-            store_latents = torch.stack(latents[k], dim=1)  # (batch_size, num_steps + 1, 4, 64, 64)
-            store_log_probs = torch.stack(log_probs[k], dim=1)  # (batch_size, num_steps)
+            images = latents_decode(pipeline, latents[k][effective_num_steps], accelerator.device, prompt_embeds1.dtype)
+            store_latents = torch.stack(latents[k], dim=1)  # (batch_size, effective_num_steps + 1, 4, 64, 64)
+            store_log_probs = torch.stack(log_probs[k], dim=1)  # (batch_size, effective_num_steps)
             prompt_embeds = prompt_embeds1
             current_latents = store_latents[:, :-1]
             next_latents = store_latents[:, 1:]
-            timesteps = pipeline.scheduler.timesteps.repeat(config.sample.batch_size, 1)  # (batch_size, num_steps)
+            timesteps = ts.repeat(config.sample.batch_size, 1)  # (batch_size, effective_num_steps)
 
             samples.append(
                 {

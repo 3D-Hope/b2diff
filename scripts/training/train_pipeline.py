@@ -331,7 +331,8 @@ class TrainingPipeline:
                 stage_config, stage_idx, logger, 
                 wandb_run=self.wandb_run,
                 pipeline=self.pipeline,
-                trainable_layers=self.trainable_layers
+                trainable_layers=self.trainable_layers,
+                sampling_timestep_indices=training_timestep_indices
             )
             logger.info(f"[{stage_idx}] Sampling completed")
             

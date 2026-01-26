@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=inc_no_branch_b2diffu
+#SBATCH --job-name=pure_inc_no_branch_b2diffu
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
@@ -129,7 +129,7 @@ fi
 echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="inc_no_branch_b2diffu"
+run_name="pure_inc_no_branch_b2diffu"
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}"
 # ------------------------------------------------------------------------------
@@ -140,10 +140,10 @@ ELAPSED_SECONDS=$((END_TIME - START_TIME))
 ELAPSED_HOURS=$(awk "BEGIN {printf \"%.4f\", ${ELAPSED_SECONDS}/3600}")
 GPU_HOURS=$(awk "BEGIN {printf \"%.4f\", ${ELAPSED_HOURS}*${NUM_GPUS}}")
 
-TIMING_LOG="logs/${ExpName}_timing.txt"
+TIMING_LOG="logs/${run_name}_timing.txt"
 
 {
-echo "Experiment: ${ExpName}"
+echo "Experiment: ${run_name}"
 echo "Start time: ${START_TIME_READABLE}"
 echo "End time:   $(date '+%Y-%m-%d %H:%M:%S')"
 echo "GPUs used:  ${NUM_GPUS}"

@@ -259,9 +259,19 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
             
             # Determine which timestep indices to train on
             if getattr(config.train, 'incremental_training', False) and training_timesteps is not None:
-                timestep_indices = training_timesteps
-                if external_logger and accelerator.is_local_main_process and idx == 0:
-                    external_logger.info(f"Training on {len(timestep_indices)}/{sample['timesteps'].shape[1]} timesteps: {timestep_indices}")
+                # When sample_incremental_steps_only is enabled, samples only contain the filtered timesteps
+                # So we iterate over the actual indices in the sample data (0 to len-1)
+                # NOT the original timestep indices from the full sequence
+                if getattr(config.train, 'sample_incremental_steps_only', False):
+                    # Sample data has filtered timesteps, use sequential indices
+                    timestep_indices = range(sample["timesteps"].shape[1])
+                    if external_logger and accelerator.is_local_main_process and idx == 0:
+                        external_logger.info(f"Training on all {len(list(timestep_indices))} sampled timesteps (incremental mode)")
+                else:
+                    # Sample data has all timesteps, use specific indices
+                    timestep_indices = training_timesteps
+                    if external_logger and accelerator.is_local_main_process and idx == 0:
+                        external_logger.info(f"Training on {len(timestep_indices)}/{sample['timesteps'].shape[1]} timesteps: {timestep_indices}")
             else:
                 timestep_indices = range(sample["timesteps"].shape[1])
 
