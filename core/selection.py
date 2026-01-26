@@ -201,6 +201,19 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     
     data = get_new_unit()
     
+    # Detect no-branching mode: both no_branching and incremental_training must be true
+    no_branching_mode = (
+        hasattr(config, 'train') and 
+        getattr(config.train, 'no_branching', False) and 
+        getattr(config.train, 'incremental_training', False)
+    )
+    
+    if no_branching_mode:
+        if logger:
+            logger.info("Running in NO-BRANCHING mode: keeping all samples without filtering")
+        else:
+            print("Running in NO-BRANCHING mode: keeping all samples without filtering")
+    
     # Select positive and negative samples
     total_batch_size = samples['eval_scores'].shape[0]
     data_size = total_batch_size // config.sample.batch_size
@@ -228,29 +241,42 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
         next_latents = batch_samples['next_latents'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
         
         score = batch_samples['eval_scores'][torch.arange(0, data_size, cur_sample_num)]
-        score = score.reshape(-1, config.split_time)
-        max_idx = score.argmax(dim=1)
-        min_idx = score.argmin(dim=1)
         
-        for j, s in enumerate(score):
-            for p_n in range(2):
-                if p_n == 0 and s[max_idx[j]] >= config.eval.pos_threshold:
-                    used_idx = max_idx[j]
-                    used_idx_2 = j * config.split_time + max_idx[j]
-                elif p_n == 1 and s[min_idx[j]] < config.eval.neg_threshold:
-                    used_idx = min_idx[j]
-                    used_idx_2 = j * config.split_time + min_idx[j]
-                else:
-                    continue
-                
-                data['prompt_embeds'].append(prompt_embeds[used_idx_2])
-                data['timesteps'].append(timesteps[used_idx_2])
-                data['log_probs'].append(log_probs[used_idx_2])
-                data['latents'].append(latents[used_idx_2])
-                data['next_latents'].append(next_latents[used_idx_2])
-                data['eval_scores'].append(s[used_idx])
-        
-        cur_sample_num *= config.split_time
+        if no_branching_mode:
+            # No-branching mode: keep all samples as-is without filtering
+            # No reshaping, no argmax/argmin, no threshold filtering
+            for idx in range(len(score)):
+                data['prompt_embeds'].append(prompt_embeds[idx])
+                data['timesteps'].append(timesteps[idx])
+                data['log_probs'].append(log_probs[idx])
+                data['latents'].append(latents[idx])
+                data['next_latents'].append(next_latents[idx])
+                data['eval_scores'].append(score[idx])
+        else:
+            # Branching mode: original behavior with split/branch selection
+            score = score.reshape(-1, config.split_time)
+            max_idx = score.argmax(dim=1)
+            min_idx = score.argmin(dim=1)
+            
+            for j, s in enumerate(score):
+                for p_n in range(2):
+                    if p_n == 0 and s[max_idx[j]] >= config.eval.pos_threshold:
+                        used_idx = max_idx[j]
+                        used_idx_2 = j * config.split_time + max_idx[j]
+                    elif p_n == 1 and s[min_idx[j]] < config.eval.neg_threshold:
+                        used_idx = min_idx[j]
+                        used_idx_2 = j * config.split_time + min_idx[j]
+                    else:
+                        continue
+                    
+                    data['prompt_embeds'].append(prompt_embeds[used_idx_2])
+                    data['timesteps'].append(timesteps[used_idx_2])
+                    data['log_probs'].append(log_probs[used_idx_2])
+                    data['latents'].append(latents[used_idx_2])
+                    data['next_latents'].append(next_latents[used_idx_2])
+                    data['eval_scores'].append(s[used_idx])
+            
+            cur_sample_num *= config.split_time
     
     # Stack data if any samples were selected
     if len(data['prompt_embeds']) > 0:
@@ -290,10 +316,16 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     # Prepare clean metrics for aggregation at pipeline level
     # Return metrics WITHOUT per-stage prefixes - pipeline will handle aggregation
     num_selected = len(data.get('prompt_embeds', []))
-    num_positive = int((data.get('eval_scores', torch.tensor([])) >= config.eval.pos_threshold).sum()) if len(data.get('eval_scores', [])) > 0 else 0
-    num_negative = int((data.get('eval_scores', torch.tensor([])) < config.eval.neg_threshold).sum()) if len(data.get('eval_scores', [])) > 0 else 0
     num_generated = len(raw_clip_scores)
     num_rejected = num_generated - num_selected
+    
+    # In no-branching mode, positive/negative metrics don't apply (all samples kept)
+    if no_branching_mode:
+        num_positive = num_selected  # All samples are kept
+        num_negative = 0
+    else:
+        num_positive = int((data.get('eval_scores', torch.tensor([])) >= config.eval.pos_threshold).sum()) if len(data.get('eval_scores', [])) > 0 else 0
+        num_negative = int((data.get('eval_scores', torch.tensor([])) < config.eval.neg_threshold).sum()) if len(data.get('eval_scores', [])) > 0 else 0
     
     selection_metrics = {
         # Clean metrics for consolidation
@@ -310,8 +342,11 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     
     if logger:
         logger.info(f"Selection completed for stage {stage_idx}")
-        logger.info(f"Generated: {num_generated}, Selected: {num_selected}, Rejected: {num_rejected}")
-        logger.info(f"Positive: {num_positive}, Negative: {num_negative}")
+        if no_branching_mode:
+            logger.info(f"NO-BRANCHING MODE: All {num_selected} samples kept (no filtering)")
+        else:
+            logger.info(f"Generated: {num_generated}, Selected: {num_selected}, Rejected: {num_rejected}")
+            logger.info(f"Positive: {num_positive}, Negative: {num_negative}")
         logger.info(f"Mean reward (all samples): {all_samples_mean_reward:.4f} ± {all_samples_std_reward:.4f}")
         logger.info(f"Cumulative reward queries: {cumulative_reward_queries}")
     

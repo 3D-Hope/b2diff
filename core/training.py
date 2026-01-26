@@ -89,6 +89,16 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     logger.info(f"\n{config}")
     seed_everything(config.seed)
     
+    # Detect no-branching mode: both no_branching and incremental_training must be true
+    no_branching_mode = (
+        hasattr(config, 'train') and 
+        getattr(config.train, 'no_branching', False) and 
+        getattr(config.train, 'incremental_training', False)
+    )
+    
+    if no_branching_mode and external_logger:
+        external_logger.info("Training in NO-BRANCHING mode: using all samples without pairing")
+    
     # Setup inference dtype
     inference_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
@@ -218,8 +228,17 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         
         # Training
         pipeline.unet.train()
+        
+        # Determine batch range based on mode
+        if no_branching_mode:
+            # No-branching: use all samples (no pairing requirement)
+            batch_range_end = total_batch_size
+        else:
+            # Branching: ensure even number for positive/negative pairing
+            batch_range_end = (total_batch_size // 2) * 2
+        
         for idx in tqdm(
-            range(0, total_batch_size // 2 * 2, config.train.batch_size),
+            range(0, batch_range_end, config.train.batch_size),
             desc="Update",
             position=2,
             leave=False,

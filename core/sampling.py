@@ -113,11 +113,34 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
     # Set seed
     seed_everything(config.seed)
     
+    # Detect no-branching mode: both no_branching and incremental_training must be true
+    no_branching_mode = (
+        hasattr(config, 'train') and 
+        getattr(config.train, 'no_branching', False) and 
+        getattr(config.train, 'incremental_training', False)
+    )
+    
+    if no_branching_mode:
+        if logger:
+            logger.info("Running in NO-BRANCHING mode: single trajectory per sample (no splits)")
+        else:
+            print("Running in NO-BRANCHING mode: single trajectory per sample (no splits)")
+    
     # SAMPLING LOOP
     pipeline.unet.eval()
     samples = []
     split_steps = [config.split_step]
     split_times = [config.split_time]
+    
+    # Adjust number of batches: in no-branching mode, generate 2x batches to compensate
+    # for lack of branching (which normally multiplies by split_time)
+    effective_num_batches = config.sample.num_batches_per_epoch
+    if no_branching_mode:
+        effective_num_batches = config.sample.num_batches_per_epoch * 2
+        if logger:
+            logger.info(f"No-branching: generating {effective_num_batches} batches (2x) to compensate for no splits")
+        else:
+            print(f"No-branching: generating {effective_num_batches} batches (2x) to compensate for no splits")
     
     total_prompts = []
     total_samples = None
@@ -152,7 +175,7 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
     
     # Main sampling loop
     for idx in tqdm(
-        range(config.sample.num_batches_per_epoch),
+        range(effective_num_batches),
         disable=not accelerator.is_local_main_process,
         position=0,
         desc="Sampling batches"
@@ -216,7 +239,8 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
             # sample
             with autocast():
                 with torch.no_grad():
-                    if ((config.sample.num_steps-i) in split_steps):
+                    # Skip branching logic when no-branching mode is enabled
+                    if not no_branching_mode and ((config.sample.num_steps-i) in split_steps):
                         branch_num = split_steps.index(config.sample.num_steps-i)
                         branch_num = split_times[branch_num]
                         cur_sample_num = len(latents)
@@ -280,7 +304,7 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
         #     for k,v in samples[0].items():
         #         print(k, v.shape)
 
-        if (idx+1)%config.sample.save_interval ==0 or idx==(config.sample.num_batches_per_epoch-1):
+        if (idx+1)%config.sample.save_interval ==0 or idx==(effective_num_batches-1):
             os.makedirs(os.path.join(save_dir, "images/"), exist_ok=True)
             print(f'-----------{accelerator.process_index} save image start-----------')
             # print(samples)
