@@ -289,10 +289,19 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
                     accelerator.backward(loss)
                     total_norm = None
                     if accelerator.sync_gradients:
-                        total_norm = accelerator.clip_grad_norm_(trainable_layers.parameters(), config.train.max_grad_norm)
+                        total_norm = accelerator.clip_grad_norm_(trainable_layers.parameters(), config.train.max_grad_norm) 
+                        # this is working. returns the grad norm before clipping.
                     
                     loss_value = loss.cpu().item()
                     grad_value = total_norm.cpu().item() if total_norm is not None else None
+                    
+                    # Compute PPO-style metrics
+                    log_prob = total_prob
+                    ref_log_prob = sample["log_probs"][:, t]
+                    approx_kl = 0.5 * torch.mean((log_prob - ref_log_prob) ** 2)
+                    clipfrac = torch.mean(
+                        (torch.abs(ratio - 1.0) > config.train.eps).float()
+                    )
                     
                     LossRecord[epoch][idx // config.train.batch_size].append(loss_value)
                     GradRecord[epoch][idx // config.train.batch_size].append(grad_value)
@@ -307,6 +316,8 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
                             "train/eval_score_mean": evaluation_score.mean().cpu().item(),
                             "train/eval_score_std": evaluation_score.std().cpu().item(),
                             "train/ratio_mean": ratio.mean().cpu().item(),
+                            "train/approx_kl": approx_kl.cpu().item(),
+                            "train/clipfrac": clipfrac.cpu().item(),
                         }
                         if grad_value is not None:
                             log_dict["train/grad_norm"] = grad_value

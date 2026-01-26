@@ -281,31 +281,31 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     with open(cumulative_queries_path, 'wb') as f:
         pickle.dump(cumulative_reward_queries, f)
     
-    # Prepare comprehensive metrics for logging
+    # Prepare clean metrics for aggregation at pipeline level
+    # Return metrics WITHOUT per-stage prefixes - pipeline will handle aggregation
+    num_selected = len(data.get('prompt_embeds', []))
+    num_positive = int((data.get('eval_scores', torch.tensor([])) >= config.eval.pos_threshold).sum()) if len(data.get('eval_scores', [])) > 0 else 0
+    num_negative = int((data.get('eval_scores', torch.tensor([])) < config.eval.neg_threshold).sum()) if len(data.get('eval_scores', [])) > 0 else 0
+    num_generated = len(raw_clip_scores)
+    num_rejected = num_generated - num_selected
+    
     selection_metrics = {
-        f"selection/stage_{stage_idx}/num_selected": len(data.get('prompt_embeds', [])),
-        f"selection/stage_{stage_idx}/num_positive": int((data.get('eval_scores', torch.tensor([])) >= config.eval.pos_threshold).sum()) if len(data.get('eval_scores', [])) > 0 else 0,
-        f"selection/stage_{stage_idx}/num_negative": int((data.get('eval_scores', torch.tensor([])) < config.eval.neg_threshold).sum()) if len(data.get('eval_scores', [])) > 0 else 0,
-        f"selection/stage_{stage_idx}/pos_threshold": config.eval.pos_threshold,
-        f"selection/stage_{stage_idx}/neg_threshold": config.eval.neg_threshold,
-        # Global metrics for all generated samples
-        f"rewards/mean_reward": all_samples_mean_reward,
-        f"rewards/std_reward": all_samples_std_reward,
-        f"rewards/num_queries": num_reward_queries,
-        f"rewards/cumulative_queries": cumulative_reward_queries,
+        # Clean metrics for consolidation
+        "num_selected": num_selected,
+        "num_positive": num_positive,
+        "num_negative": num_negative,
+        "num_generated": num_generated,
+        "num_rejected": num_rejected,
+        "mean_reward": all_samples_mean_reward,
+        "std_reward": all_samples_std_reward,
+        "num_queries": num_reward_queries,
+        "cumulative_queries": cumulative_reward_queries,
     }
-    
-    # Add score metrics
-    for key, val in score_metrics.items():
-        selection_metrics[f"rewards/stage_{stage_idx}/{key}"] = val
-    
-    # Log to wandb if available
-    if wandb_run:
-        wandb_run.log(selection_metrics)
     
     if logger:
         logger.info(f"Selection completed for stage {stage_idx}")
-        logger.info(f"Selected {len(data.get('prompt_embeds', []))} samples")
+        logger.info(f"Generated: {num_generated}, Selected: {num_selected}, Rejected: {num_rejected}")
+        logger.info(f"Positive: {num_positive}, Negative: {num_negative}")
         logger.info(f"Mean reward (all samples): {all_samples_mean_reward:.4f} ± {all_samples_std_reward:.4f}")
         logger.info(f"Cumulative reward queries: {cumulative_reward_queries}")
     

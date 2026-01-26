@@ -62,8 +62,19 @@ class TrainingPipeline:
         # Note: Accelerator is NOT created here - will be created per-stage in training.py
         # because gradient_accumulation_steps depends on split_step which varies by stage
         
-        # Track metrics for plotting CLIP score vs reward queries (paper figure)
-        self.metrics_history = []  # Store metrics from each stage
+        # Metrics aggregation for progression curves across ALL stages
+        self.metrics_history = {
+            'stages': [],  # Stage indices
+            'num_selected': [],  # Number of selected samples per stage
+            'num_positive': [],  # Number of positive samples per stage
+            'num_negative': [],  # Number of negative samples per stage
+            'num_generated': [],  # Total generated samples per stage
+            'num_rejected': [],  # Rejected samples per stage
+            'mean_reward': [],  # Mean reward per stage
+            'std_reward': [],  # Std reward per stage
+            'cumulative_queries': [],  # Cumulative reward queries
+            'stage_duration': [],  # Time taken per stage
+        }
         
         # Setup directories
         self.setup_directories()
@@ -287,16 +298,6 @@ class TrainingPipeline:
             )
             logger.info(f"[{stage_idx}] Selection completed")
             
-            # Store metrics for this stage (for plotting)
-            stage_metrics = {
-                'stage': stage_idx,
-                'mean_reward': metrics.get('rewards/mean_reward', 0.0),
-                'std_reward': metrics.get('rewards/std_reward', 0.0),
-                'cumulative_queries': metrics.get('rewards/cumulative_queries', 0),
-                'num_queries': metrics.get('rewards/num_queries', 0),
-            }
-            self.metrics_history.append(stage_metrics)
-            
             # Step 3: Training
             logger.info(f"[{stage_idx}] Running training...")
             save_dir = run_training(
@@ -311,28 +312,45 @@ class TrainingPipeline:
             stage_time = time.time() - stage_start_time
             self.stage_times.append(stage_time)
             
-            # Log stage metrics to wandb (including selection metrics)
+            # Aggregate metrics for progression curves
+            # metrics dict contains: num_selected, num_positive, num_negative, num_generated, 
+            # num_rejected, mean_reward, std_reward, num_queries, cumulative_queries
+            self.metrics_history['stages'].append(stage_idx)
+            self.metrics_history['num_selected'].append(metrics.get('num_selected', 0))
+            self.metrics_history['num_positive'].append(metrics.get('num_positive', 0))
+            self.metrics_history['num_negative'].append(metrics.get('num_negative', 0))
+            self.metrics_history['num_generated'].append(metrics.get('num_generated', 0))
+            self.metrics_history['num_rejected'].append(metrics.get('num_rejected', 0))
+            self.metrics_history['mean_reward'].append(metrics.get('mean_reward', 0.0))
+            self.metrics_history['std_reward'].append(metrics.get('std_reward', 0.0))
+            self.metrics_history['cumulative_queries'].append(metrics.get('cumulative_queries', 0))
+            self.metrics_history['stage_duration'].append(stage_time)
+            
+            # Log aggregated metrics with stage as x-axis for clean progression curves
             if self.config.wandb.enabled and self.wandb_run:
                 log_dict = {
-                    "stage/index": stage_idx,
-                    "stage/time_seconds": stage_time,
-                    "stage/time_minutes": stage_time / 60,
-                    "stage/split_step": stage_config.split_step,
+                    # Progression curves (clean - shows evolution across stages)
+                    "progression/num_selected": metrics.get('num_selected', 0),
+                    "progression/num_positive": metrics.get('num_positive', 0),
+                    "progression/num_negative": metrics.get('num_negative', 0),
+                    "progression/num_generated": metrics.get('num_generated', 0),
+                    "progression/num_rejected": metrics.get('num_rejected', 0),
+                    "progression/selection_rate": (metrics.get('num_selected', 0) / max(metrics.get('num_generated', 1), 1)) * 100,
+                    "progression/mean_reward": metrics.get('mean_reward', 0.0),
+                    "progression/std_reward": metrics.get('std_reward', 0.0),
+                    "progression/cumulative_queries": metrics.get('cumulative_queries', 0),
+                    "progression/stage_duration_seconds": stage_time,
+                    "progression/stage_duration_minutes": stage_time / 60,
+                    # Pipeline level info
+                    "pipeline/stage": stage_idx,
                     "pipeline/elapsed_hours": (time.time() - self.start_time) / 3600,
                 }
-                # Add selection metrics if available
-                if metrics:
-                    log_dict.update(metrics)
                 self.wandb_run.log(log_dict)
             
             logger.info(f"[{stage_idx}] Stage completed in {stage_time:.2f}s ({stage_time/60:.2f}m)")
-            
-            # Generate incremental plot to show live progress in wandb
-            # Update every 5 stages to avoid too much overhead, or always update if <20 stages
-            if (self.config.wandb.enabled and self.wandb_run and 
-                (stage_idx % 5 == 0 or stage_idx < 20 or stage_idx == self.config.pipeline.stage_cnt - 1)):
-                logger.info(f"[{stage_idx}] Generating incremental plot...")
-                self.plot_clip_vs_queries_incremental(stage_idx)
+            logger.info(f"  → Generated: {metrics.get('num_generated', 0)}, Selected: {metrics.get('num_selected', 0)}, Rejected: {metrics.get('num_rejected', 0)}")
+            logger.info(f"  → Positive: {metrics.get('num_positive', 0)}, Negative: {metrics.get('num_negative', 0)}")
+            logger.info(f"  → Mean reward: {metrics.get('mean_reward', 0.0):.4f} ± {metrics.get('std_reward', 0.0):.4f}")
             
             # Sleep between stages
             if stage_idx < self.config.pipeline.stage_cnt - 1:
@@ -343,8 +361,8 @@ class TrainingPipeline:
             
             if self.config.wandb.enabled and self.wandb_run:
                 self.wandb_run.log({
-                    "stage/index": stage_idx,
-                    "stage/error": str(e),
+                    "pipeline/stage": stage_idx,
+                    "error/stage_failed": True,
                 })
             
             raise
@@ -375,13 +393,10 @@ class TrainingPipeline:
         logger.info(f"Average stage time: {avg_stage_time:.2f}s ({avg_stage_time/60:.2f}m)")
         logger.info(f"Stages completed: {len(self.stage_times)}")
         
-        # Save metrics and generate plot (reproducing paper's figure)
-        logger.info("Saving metrics and generating plots...")
+        # Save metrics and generate summary tables
+        logger.info("Saving metrics and generating summary...")
         self.save_metrics_history()
-        self.plot_clip_vs_queries()
-        
-        # Save timing summary
-        self.save_timing_summary(total_time, total_hours)
+        self.create_summary_table()
         
         # Log final metrics to wandb
         if self.config.wandb.enabled and self.wandb_run:
@@ -394,162 +409,99 @@ class TrainingPipeline:
             self.wandb_run.finish()
     
     def save_metrics_history(self):
-        """Save metrics history to JSON file for later analysis."""
+        """Save aggregated metrics history to JSON file for analysis."""
         import json
         
-        metrics_file = os.path.join("logs", f"{self.config.exp_name}_metrics_history.json")
+        metrics_file = os.path.join("logs", f"{self.config.exp_name}_progression_metrics.json")
+        
+        # Prepare data in a format that's easy to plot
+        metrics_export = {
+            'exp_name': self.config.exp_name,
+            'total_stages_completed': len(self.metrics_history['stages']),
+            'data': {
+                'stages': self.metrics_history['stages'],
+                'num_selected': self.metrics_history['num_selected'],
+                'num_positive': self.metrics_history['num_positive'],
+                'num_negative': self.metrics_history['num_negative'],
+                'num_generated': self.metrics_history['num_generated'],
+                'num_rejected': self.metrics_history['num_rejected'],
+                'mean_reward': self.metrics_history['mean_reward'],
+                'std_reward': self.metrics_history['std_reward'],
+                'cumulative_queries': self.metrics_history['cumulative_queries'],
+                'stage_duration_seconds': self.metrics_history['stage_duration'],
+            }
+        }
         
         with open(metrics_file, 'w') as f:
-            json.dump({
-                'exp_name': self.config.exp_name,
-                'stages': self.metrics_history
-            }, f, indent=2)
+            json.dump(metrics_export, f, indent=2)
         
-        logger.info(f"Metrics history saved to {metrics_file}")
+        logger.info(f"✓ Metrics saved to {metrics_file}")
         return metrics_file
     
-    def plot_clip_vs_queries(self):
-        """Generate CLIP score vs reward queries plot (reproducing paper's figure)."""
-        try:
-            import matplotlib.pyplot as plt
-            import numpy as np
-        except ImportError:
-            logger.warning("Matplotlib not available - skipping plot generation")
-            return None
+    def create_summary_table(self):
+        """Create and log a summary table of all stages."""
+        if len(self.metrics_history['stages']) == 0:
+            logger.warning("No stages completed - skipping summary table")
+            return
         
-        if len(self.metrics_history) == 0:
-            logger.warning("No metrics to plot")
-            return None
-        
-        # Extract data
-        stages = [m['stage'] for m in self.metrics_history]
-        mean_rewards = [m['mean_reward'] for m in self.metrics_history]
-        std_rewards = [m['std_reward'] for m in self.metrics_history]
-        cumulative_queries = [m['cumulative_queries'] for m in self.metrics_history]
-        
-        # Create plot
-        fig, ax = plt.subplots(figsize=(10, 6))
-        
-        # Convert to numpy for easier manipulation
-        queries = np.array(cumulative_queries)
-        rewards = np.array(mean_rewards)
-        stds = np.array(std_rewards)
-        
-        # Plot mean with confidence band (matching paper's style)
-        ax.plot(queries, rewards, label='Ours (B²-DiffuRL)', 
-                color='#ff7f0e', linewidth=2, marker='o', markersize=3)
-        ax.fill_between(queries, rewards - stds, rewards + stds, 
-                        alpha=0.2, color='#ff7f0e')
-        
-        ax.set_xlabel('Reward Queries', fontsize=12)
-        ax.set_ylabel('CLIP Scores', fontsize=12)
-        ax.set_title(f'CLIP Score vs Reward Queries - {self.config.exp_name}', fontsize=14)
-        ax.legend(fontsize=10)
-        ax.grid(True, alpha=0.3)
-        
-        # Save plot
-        plot_file = os.path.join("logs", f"{self.config.exp_name}_clip_vs_queries.png")
-        plt.savefig(plot_file, dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        logger.info(f"CLIP vs queries plot saved to {plot_file}")
-        
-        # Log to wandb if enabled
-        if self.wandb_run:
-            self.wandb_run.log({"final_plot/clip_vs_queries": wandb.Image(plot_file)})
-        
-        return plot_file
-    
-    def plot_clip_vs_queries_incremental(self, stage_idx: int):
-        """Generate incremental plot during training to show progress in real-time.
-        
-        This creates a plot with current data and logs it to wandb so you can
-        see the CLIP score curve building up as training progresses.
-        
-        Args:
-            stage_idx: Current stage index
-        """
-        try:
-            import matplotlib.pyplot as plt
-            import numpy as np
-        except ImportError:
-            return None
-        
-        if len(self.metrics_history) == 0:
-            return None
-        
-        # Extract data up to current stage
-        stages = [m['stage'] for m in self.metrics_history]
-        mean_rewards = [m['mean_reward'] for m in self.metrics_history]
-        std_rewards = [m['std_reward'] for m in self.metrics_history]
-        cumulative_queries = [m['cumulative_queries'] for m in self.metrics_history]
-        
-        # Create plot
-        fig, ax = plt.subplots(figsize=(10, 6))
-        
-        queries = np.array(cumulative_queries)
-        rewards = np.array(mean_rewards)
-        stds = np.array(std_rewards)
-        
-        # Plot with progress indicator
-        ax.plot(queries, rewards, label=f'Ours (Stage {stage_idx}/{self.config.pipeline.stage_cnt-1})', 
-                color='#ff7f0e', linewidth=2, marker='o', markersize=3)
-        ax.fill_between(queries, rewards - stds, rewards + stds, 
-                        alpha=0.2, color='#ff7f0e')
-        
-        # Add annotation for latest point
-        if len(rewards) > 0:
-            ax.annotate(f'{rewards[-1]:.4f}', 
-                       xy=(queries[-1], rewards[-1]),
-                       xytext=(10, 10), textcoords='offset points',
-                       bbox=dict(boxstyle='round,pad=0.5', fc='yellow', alpha=0.7),
-                       arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0'))
-        
-        ax.set_xlabel('Reward Queries', fontsize=12)
-        ax.set_ylabel('CLIP Scores', fontsize=12)
-        ax.set_title(f'CLIP Score vs Reward Queries [Training Progress]', fontsize=14)
-        ax.legend(fontsize=10)
-        ax.grid(True, alpha=0.3)
-        
-        # Save incremental plot
-        plot_file = os.path.join("logs", f"{self.config.exp_name}_clip_vs_queries_progress.png")
-        plt.savefig(plot_file, dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        # Log to wandb with step counter so it shows progression
-        if self.wandb_run:
-            self.wandb_run.log({
-                "progress/clip_vs_queries": wandb.Image(plot_file),
-                "progress/current_stage": stage_idx,
-                "progress/latest_clip_score": float(rewards[-1]) if len(rewards) > 0 else 0.0,
+        # Prepare table data
+        summary_data = []
+        for i in range(len(self.metrics_history['stages'])):
+            summary_data.append({
+                'Stage': self.metrics_history['stages'][i],
+                'Generated': self.metrics_history['num_generated'][i],
+                'Selected': self.metrics_history['num_selected'][i],
+                'Rejected': self.metrics_history['num_rejected'][i],
+                'Positive': self.metrics_history['num_positive'][i],
+                'Negative': self.metrics_history['num_negative'][i],
+                'Selection %': f"{(self.metrics_history['num_selected'][i] / max(self.metrics_history['num_generated'][i], 1)) * 100:.1f}%",
+                'Mean Reward': f"{self.metrics_history['mean_reward'][i]:.4f}",
+                'Reward Std': f"{self.metrics_history['std_reward'][i]:.4f}",
+                'Duration (m)': f"{self.metrics_history['stage_duration'][i] / 60:.2f}",
             })
         
-        return plot_file
-    
-    def save_timing_summary(self, total_time: float, total_hours: float):
-        """
-        Save timing summary to file.
+        # Log to console
+        logger.info("\n" + "=" * 150)
+        logger.info("STAGE PROGRESSION SUMMARY")
+        logger.info("=" * 150)
         
-        Args:
-            total_time: Total elapsed time in seconds
-            total_hours: Total elapsed time in hours
-        """
-        timing_log = f"logs/{self.config.exp_name}_timing.txt"
+        # Print header
+        header = " | ".join([f"{k:>12}" for k in summary_data[0].keys()])
+        logger.info(header)
+        logger.info("-" * len(header))
         
-        with open(timing_log, 'w') as f:
-            f.write(f"Experiment: {self.config.exp_name}\n")
-            f.write(f"Start time: {datetime.fromtimestamp(self.start_time).strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"Total stages: {len(self.stage_times)}\n")
-            f.write(f"Wall time: {total_time:.2f}s\n")
-            f.write(f"Total hours: {total_hours:.4f}\n")
-            f.write(f"Average stage time: {sum(self.stage_times) / len(self.stage_times):.2f}s\n")
-            f.write("\nPer-stage times:\n")
-            for idx, stage_time in enumerate(self.stage_times):
-                stage_num = self.config.pipeline.continue_from_stage + idx
-                f.write(f"  Stage {stage_num}: {stage_time:.2f}s ({stage_time/60:.2f}m)\n")
+        # Print rows
+        for row in summary_data:
+            row_str = " | ".join([f"{v:>12}" for v in row.values()])
+            logger.info(row_str)
         
-        logger.info(f"Timing summary saved to {timing_log}")
+        logger.info("=" * 150 + "\n")
+        
+        # Save table as CSV for easy analysis
+        csv_file = os.path.join("logs", f"{self.config.exp_name}_summary_table.csv")
+        try:
+            import csv
+            with open(csv_file, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=summary_data[0].keys())
+                writer.writeheader()
+                writer.writerows(summary_data)
+            logger.info(f"✓ Summary table saved to {csv_file}")
+        except Exception as e:
+            logger.warning(f"Could not save CSV table: {e}")
+        
+        # Log summary table to wandb if available
+        if self.config.wandb.enabled and self.wandb_run:
+            try:
+                import wandb
+                # Create wandb table
+                columns = list(summary_data[0].keys())
+                table = wandb.Table(columns=columns)
+                for row in summary_data:
+                    table.add_data(*row.values())
+                self.wandb_run.log({"summary/stage_progression": table})
+                logger.info("✓ Summary table logged to wandb")
+            except Exception as e:
+                logger.warning(f"Could not log table to wandb: {e}")
 
 
 @hydra.main(version_base=None, config_path="../../configs", config_name="config")
