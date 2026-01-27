@@ -320,6 +320,43 @@ class TrainingPipeline:
         else:
             logger.info("No cumulative queries count found (will start from 0)")
     
+    def cleanup_stage_images(self, stage_idx: int):
+        """Remove image files from a stage to save disk space.
+        
+        Keeps the important data files (sample.pkl, prompt.json, scores.pkl, etc.)
+        but removes the images/ directory which contains the large PNG files.
+        
+        Args:
+            stage_idx: Current stage index
+        """
+        import shutil
+        
+        stage_dir = os.path.join(
+            self.config.save_path,
+            self.config.exp_name,
+            f"stage{stage_idx}"
+        )
+        
+        images_dir = os.path.join(stage_dir, "images")
+        
+        if os.path.exists(images_dir):
+            try:
+                # Count images before deletion
+                image_files = [f for f in os.listdir(images_dir) if f.endswith('.png')]
+                num_images = len(image_files)
+                
+                # Calculate approximate space saved (assuming ~100KB per image on average)
+                approx_mb_saved = (num_images * 100) / 1024
+                
+                # Remove the entire images directory
+                shutil.rmtree(images_dir)
+                
+                logger.info(f"✓ Cleaned up {num_images} images from stage {stage_idx} (~{approx_mb_saved:.1f} MB saved)")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup images for stage {stage_idx}: {e}")
+        else:
+            logger.debug(f"No images directory found for stage {stage_idx}")
+    
     def calculate_split_step(self, stage_idx: int) -> int:
         """
         Calculate the split step for a given stage.
@@ -491,6 +528,10 @@ class TrainingPipeline:
             logger.info(f"  → Generated: {metrics.get('num_generated', 0)}, Selected: {metrics.get('num_selected', 0)}, Rejected: {metrics.get('num_rejected', 0)}")
             logger.info(f"  → Positive: {metrics.get('num_positive', 0)}, Negative: {metrics.get('num_negative', 0)}")
             logger.info(f"  → Mean reward: {metrics.get('mean_reward', 0.0):.4f} ± {metrics.get('std_reward', 0.0):.4f}")
+            
+            # Clean up images to save disk space (if enabled)
+            if getattr(self.config.pipeline, 'cleanup_images', True):
+                self.cleanup_stage_images(stage_idx)
             
             # Sleep between stages
             if stage_idx < self.config.pipeline.stage_cnt - 1:
