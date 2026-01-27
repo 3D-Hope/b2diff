@@ -24,7 +24,7 @@ tqdm = partial(tqdm_lib, dynamic_ncols=True)
 logger = get_logger(__name__)
 
 
-def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, pipeline=None, trainable_layers=None, training_timesteps=None):
+def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, pipeline=None, trainable_layers=None, training_timesteps=None, resume_checkpoint_path=None):
     """
     Run the training phase for a given stage.
     
@@ -35,6 +35,8 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         wandb_run: Existing wandb run to log to (optional)
         pipeline: Pre-loaded StableDiffusionPipeline (avoids reloading)
         trainable_layers: Pre-initialized trainable layers
+        training_timesteps: List of timestep indices for incremental training (optional)
+        resume_checkpoint_path: Path to checkpoint for loading optimizer state (optional)
         
     Returns:
         save_dir: Directory where checkpoints were saved
@@ -194,10 +196,26 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     assert config.sample.batch_size >= config.train.batch_size
     assert config.sample.batch_size % config.train.batch_size == 0
     
-    # No checkpoint loading - model stays in memory across stages!
-    # if config.resume_from:
-    #     logger.info(f"Resuming from {config.resume_from}")
-    #     accelerator.load_state(config.resume_from)
+    # Load checkpoint state (optimizer, scaler, random states) if resuming
+    if resume_checkpoint_path:
+        if external_logger:
+            external_logger.info(f"Loading optimizer state from: {resume_checkpoint_path}")
+        else:
+            logger.info(f"Loading optimizer state from: {resume_checkpoint_path}")
+        
+        try:
+            accelerator.load_state(resume_checkpoint_path)
+            if external_logger:
+                external_logger.info("\u2713 Optimizer, scaler, and random states restored from checkpoint")
+            else:
+                logger.info("\u2713 Optimizer, scaler, and random states restored from checkpoint")
+        except Exception as e:
+            if external_logger:
+                external_logger.warning(f"Failed to load checkpoint state: {e}")
+                external_logger.warning("Continuing with fresh optimizer state")
+            else:
+                logger.warning(f"Failed to load checkpoint state: {e}")
+                logger.warning("Continuing with fresh optimizer state")
     
     # Load sample data
     samples = load_sample_stage(save_dir)

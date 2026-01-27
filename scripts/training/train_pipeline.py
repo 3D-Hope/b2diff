@@ -89,9 +89,18 @@ class TrainingPipeline:
         # Load model ONCE for all stages
         self.load_model()
         
+        # Track checkpoint path for optimizer loading
+        self.resume_checkpoint_path = None
+        
         # If resuming from a stage > 0, load the checkpoint from previous stage
         if config.pipeline.continue_from_stage > 0:
             self.load_resume_checkpoint(config.pipeline.continue_from_stage)
+            
+            # Load reward normalization history if it exists
+            self.load_reward_history()
+            
+            # Load cumulative reward queries count if it exists
+            self.load_cumulative_queries()
     
     def setup_directories(self):
         """Create necessary directories."""
@@ -104,14 +113,22 @@ class TrainingPipeline:
     
     def init_wandb(self):
         """Initialize wandb for pipeline-level tracking (single run for all stages)."""
-        self.wandb_run = wandb.init(
-            project=self.config.wandb.project,
-            entity=self.config.wandb.entity,
-            name=f"{self.config.exp_name}",
-            config=OmegaConf.to_container(self.config, resolve=True),
-            tags=["pipeline", self.config.exp_name],
-            reinit=False,  # Use same run throughout
-        )
+        wandb_kwargs = {
+            "project": self.config.wandb.project,
+            "entity": self.config.wandb.entity,
+            "name": f"{self.config.exp_name}",
+            "config": OmegaConf.to_container(self.config, resolve=True),
+            "tags": ["pipeline", self.config.exp_name],
+            "reinit": False,  # Use same run throughout
+        }
+        
+        # Support resuming from existing wandb run
+        if hasattr(self.config.wandb, 'resume_id') and self.config.wandb.resume_id:
+            wandb_kwargs["id"] = self.config.wandb.resume_id
+            wandb_kwargs["resume"] = "must"
+            logger.info(f"Resuming wandb run with ID: {self.config.wandb.resume_id}")
+        
+        self.wandb_run = wandb.init(**wandb_kwargs)
         logger.info("Wandb initialized for pipeline tracking (single run for all stages)")
     
     def load_model(self):
@@ -177,6 +194,38 @@ class TrainingPipeline:
         
         logger.info("✓ Model loaded and ready for all stages")
     
+    def find_last_checkpoint(self, stage_idx: int):
+        """Find the last available checkpoint for a given stage.
+        
+        Args:
+            stage_idx: The stage index to find checkpoint for
+            
+        Returns:
+            checkpoint_path: Path to the checkpoint, or None if not found
+        """
+        stage_dir = os.path.join(
+            self.config.save_path,
+            self.config.exp_name,
+            f"stage{stage_idx}",
+            "checkpoints"
+        )
+        
+        if not os.path.exists(stage_dir):
+            return None
+        
+        # Find all checkpoint directories
+        checkpoints = [d for d in os.listdir(stage_dir) if d.startswith("checkpoint_")]
+        if not checkpoints:
+            return None
+        
+        # Sort by checkpoint number and get the last one
+        checkpoints.sort(key=lambda x: int(x.split("_")[1]))
+        last_checkpoint = checkpoints[-1]
+        
+        checkpoint_path = os.path.join(stage_dir, last_checkpoint)
+        logger.info(f"Found last checkpoint for stage {stage_idx}: {last_checkpoint}")
+        return checkpoint_path
+    
     def load_resume_checkpoint(self, resume_stage_idx: int):
         """Load checkpoint from previous stage when resuming.
         
@@ -184,21 +233,19 @@ class TrainingPipeline:
             resume_stage_idx: The stage we want to resume from
         """
         prev_stage = resume_stage_idx - 1
-        checkpoint_num = self.config.train.num_epochs // self.config.train.save_interval
-        checkpoint_path = os.path.join(
-            self.config.save_path,
-            self.config.exp_name,
-            f"stage{prev_stage}",
-            "checkpoints",
-            f"checkpoint_{checkpoint_num}"
-        )
         
-        if not os.path.exists(checkpoint_path):
-            logger.warning(f"Resume checkpoint not found: {checkpoint_path}")
+        # Auto-find the last checkpoint from previous stage
+        checkpoint_path = self.find_last_checkpoint(prev_stage)
+        
+        if not checkpoint_path:
+            logger.warning(f"No checkpoint found for stage {prev_stage}")
             logger.warning(f"Starting from scratch instead of resuming from stage {resume_stage_idx}")
             return
         
         logger.info(f"Loading checkpoint from stage {prev_stage}: {checkpoint_path}")
+        
+        # Store checkpoint path for optimizer loading in training
+        self.resume_checkpoint_path = checkpoint_path
         
         if self.config.use_lora:
             # Load LoRA weights following the original pattern
@@ -227,6 +274,51 @@ class TrainingPipeline:
             self.pipeline.unet.load_state_dict(loaded_unet.state_dict())
             del loaded_unet
             logger.info(f"✓ Resumed UNet weights from stage {prev_stage}")
+    
+    def load_reward_history(self):
+        """Load reward normalization history from previous run."""
+        history_path = os.path.join(
+            self.config.save_path,
+            self.config.exp_name,
+            'history_scores.pkl'
+        )
+        
+        if os.path.exists(history_path):
+            try:
+                import pickle
+                with open(history_path, 'rb') as f:
+                    history_data = pickle.load(f)
+                logger.info(f"✓ Loaded reward normalization history with {len(history_data)} entries")
+                logger.info(f"  History path: {history_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load reward history: {e}")
+        else:
+            logger.info("No reward history found (will start fresh)")
+    
+    def load_cumulative_queries(self):
+        """Load cumulative reward queries count from previous run."""
+        queries_path = os.path.join(
+            self.config.save_path,
+            self.config.exp_name,
+            'cumulative_reward_queries.pkl'
+        )
+        
+        if os.path.exists(queries_path):
+            try:
+                import pickle
+                with open(queries_path, 'rb') as f:
+                    cumulative_count = pickle.load(f)
+                logger.info(f"✓ Loaded cumulative reward queries: {cumulative_count}")
+                logger.info(f"  Will continue counting from this point")
+                
+                # Update metrics history to start from this count
+                if len(self.metrics_history['cumulative_queries']) == 0:
+                    # Only if we're starting fresh (no stages run yet)
+                    self.metrics_history['cumulative_queries'].append(cumulative_count)
+            except Exception as e:
+                logger.warning(f"Failed to load cumulative queries: {e}")
+        else:
+            logger.info("No cumulative queries count found (will start from 0)")
     
     def calculate_split_step(self, stage_idx: int) -> int:
         """
@@ -351,7 +443,8 @@ class TrainingPipeline:
                 wandb_run=self.wandb_run,
                 pipeline=self.pipeline,
                 trainable_layers=self.trainable_layers,
-                training_timesteps=training_timestep_indices
+                training_timesteps=training_timestep_indices,
+                resume_checkpoint_path=self.resume_checkpoint_path if stage_idx == self.config.pipeline.continue_from_stage else None
             )
             logger.info(f"[{stage_idx}] Training completed")
             

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=pure_inc_no_branch_b2diffu
+#SBATCH --job-name=inc_b2diffu
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
@@ -129,9 +129,12 @@ fi
 echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="pure_inc_no_branch_b2diffu"
+run_name="inc_b2diffu"
 python3 ./scripts/training/train_pipeline.py \
-    exp_name="${run_name}"
+    exp_name="${run_name}" \
+    pipeline.continue_from_stage=39 \
+    wandb.resume_id="ctkrug0g" \
+    
 # ------------------------------------------------------------------------------
 # Timing summary
 # ------------------------------------------------------------------------------

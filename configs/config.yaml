@@ -94,6 +94,7 @@ wandb:
   project: "b2diff"  # Single run for entire pipeline
   enabled: true
   log_model: false
+  resume_id: ""  # Set to wandb run ID (e.g., "ctkrug0g") to resume logging
 
 # Hydra configuration
 hydra:
