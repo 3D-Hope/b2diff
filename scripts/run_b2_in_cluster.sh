@@ -134,6 +134,11 @@ python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
     pipeline.continue_from_stage=39 \
     wandb.resume_id="ctkrug0g" \
+    train.incremental_training=True \
+    train.no_branching=False \
+    train.sample_incremental_steps_only=False \
+    
+
     
 # ------------------------------------------------------------------------------
 # Timing summary

@@ -322,10 +322,14 @@ class TrainingPipeline:
             logger.info("No cumulative queries count found (will start from 0)")
     
     def cleanup_stage_images(self, stage_idx: int):
-        """Remove image files from a stage to save disk space.
+        """Remove image files and large pickle files from a stage to save disk space.
         
-        Keeps the important data files (sample.pkl, prompt.json, scores.pkl, etc.)
-        but removes the images/ directory which contains the large PNG files.
+        Removes:
+        - images/ directory (PNG files)
+        - sample.pkl (all generated samples before selection)
+        - sample_stage.pkl (selected samples - can be regenerated if needed)
+        
+        Keeps: prompt.json, eval/scores.pkl, checkpoints/
         
         Args:
             stage_idx: Current stage index
@@ -338,25 +342,24 @@ class TrainingPipeline:
             f"stage{stage_idx}"
         )
         
+        # Clean up images directory
         images_dir = os.path.join(stage_dir, "images")
-        
         if os.path.exists(images_dir):
             try:
-                # Count images before deletion
-                image_files = [f for f in os.listdir(images_dir) if f.endswith('.png')]
-                num_images = len(image_files)
-                
-                # Calculate approximate space saved (assuming ~100KB per image on average)
-                approx_mb_saved = (num_images * 100) / 1024
-                
-                # Remove the entire images directory
                 shutil.rmtree(images_dir)
-                
-                logger.info(f"✓ Cleaned up {num_images} images from stage {stage_idx} (~{approx_mb_saved:.1f} MB saved)")
             except Exception as e:
                 logger.warning(f"Failed to cleanup images for stage {stage_idx}: {e}")
-        else:
-            logger.debug(f"No images directory found for stage {stage_idx}")
+        
+        # Clean up large pickle files
+        for pkl_file in ['sample.pkl', 'sample_stage.pkl']:
+            pkl_path = os.path.join(stage_dir, pkl_file)
+            if os.path.exists(pkl_path):
+                try:
+                    os.remove(pkl_path)
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup {pkl_file} for stage {stage_idx}: {e}")
+        
+        logger.info(f"✓ Cleaned up stage {stage_idx}")
     
     def calculate_split_step(self, stage_idx: int) -> int:
         """

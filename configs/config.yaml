@@ -73,8 +73,8 @@ train:
   save_interval: 2
   num_checkpoint_limit: 21
   incremental_training: true
-  no_branching: true
-  sample_incremental_steps_only: true
+  no_branching: false
+  sample_incremental_steps_only: false
 
 # Evaluation & Selection configuration
 eval:
