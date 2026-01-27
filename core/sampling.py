@@ -42,10 +42,10 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
         save_dir: Directory where samples were saved
     """
     # Convert OmegaConf to dict if needed
-    if hasattr(config, 'to_dict'):
-        config_dict = config.to_dict()
-    else:
-        config_dict = config
+    # if hasattr(config, 'to_dict'):
+    #     config_dict = config.to_dict()
+    # else:
+    #     config_dict = config
         
     if logger:
         logger.info(f"Starting sampling for stage {stage_idx}")
