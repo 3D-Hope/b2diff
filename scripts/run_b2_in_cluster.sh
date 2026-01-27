@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=inc_no_branch_b2diffu
+#SBATCH --job-name=pure_inc_no_branch_b2diffu
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
@@ -129,15 +129,23 @@ fi
 echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="inc_no_branch_b2diffu"
+# run_name="inc_no_branch_b2diffu"
+# python3 ./scripts/training/train_pipeline.py \
+#     exp_name="${run_name}" \
+#     pipeline.continue_from_stage=16 \
+#     wandb.resume_id="m9ns79qa" \
+#     train.incremental_training=True \
+#     train.no_branching=True \
+#     train.sample_incremental_steps_only=False \
+
+run_name="pure_inc_no_branch_b2diffu"
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
-    pipeline.continue_from_stage=16 \
-    wandb.resume_id="m9ns79qa" \
+    pipeline.continue_from_stage=12 \
+    wandb.resume_id="x0fdpjtu" \
     train.incremental_training=True \
     train.no_branching=True \
-    train.sample_incremental_steps_only=False \
-
+    train.sample_incremental_steps_only=True \
 
     
 # ------------------------------------------------------------------------------
