@@ -59,6 +59,7 @@ class TrainingPipeline:
         self.wandb_run = None
         self.pipeline = None  # Will hold the model pipeline
         self.trainable_layers = None  # Will hold trainable parameters
+        self.optimizer = None  # Will hold optimizer (persists across stages)
         # Note: Accelerator is NOT created here - will be created per-stage in training.py
         # because gradient_accumulation_steps depends on split_step which varies by stage
         
@@ -475,13 +476,14 @@ class TrainingPipeline:
             
             # Step 3: Training
             logger.info(f"[{stage_idx}] Running training...")
-            save_dir = run_training(
+            save_dir, self.optimizer = run_training(
                 stage_config, stage_idx, logger, 
                 wandb_run=self.wandb_run,
                 pipeline=self.pipeline,
                 trainable_layers=self.trainable_layers,
                 training_timesteps=training_timestep_indices,
-                resume_checkpoint_path=self.resume_checkpoint_path if stage_idx == self.config.pipeline.continue_from_stage else None
+                resume_checkpoint_path=self.resume_checkpoint_path if stage_idx == self.config.pipeline.continue_from_stage else None,
+                optimizer=self.optimizer  # Pass existing optimizer (None on first stage)
             )
             logger.info(f"[{stage_idx}] Training completed")
             

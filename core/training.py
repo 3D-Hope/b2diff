@@ -24,7 +24,7 @@ tqdm = partial(tqdm_lib, dynamic_ncols=True)
 logger = get_logger(__name__)
 
 
-def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, pipeline=None, trainable_layers=None, training_timesteps=None, resume_checkpoint_path=None):
+def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, pipeline=None, trainable_layers=None, training_timesteps=None, resume_checkpoint_path=None, optimizer=None):
     """
     Run the training phase for a given stage.
     
@@ -37,9 +37,10 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         trainable_layers: Pre-initialized trainable layers
         training_timesteps: List of timestep indices for incremental training (optional)
         resume_checkpoint_path: Path to checkpoint for loading optimizer state (optional)
+        optimizer: Existing optimizer from previous stage (optional, will create new if None)
         
     Returns:
-        save_dir: Directory where checkpoints were saved
+        Tuple of (save_dir, optimizer): Directory where checkpoints were saved and optimizer instance
     """
     # Convert OmegaConf to dict if needed
     if hasattr(config, 'to_dict'):
@@ -143,23 +144,29 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     if config.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
     
-    # Initialize optimizer
-    if config.train.use_8bit_adam:
-        try:
-            import bitsandbytes as bnb
-        except ImportError:
-            raise ImportError("Please install bitsandbytes to use 8-bit Adam.")
-        optimizer_cls = bnb.optim.AdamW8bit
+    # Initialize optimizer (only if not provided from previous stage)
+    if optimizer is None:
+        if external_logger:
+            external_logger.info("Creating new optimizer (first stage or fresh start)")
+        if config.train.use_8bit_adam:
+            try:
+                import bitsandbytes as bnb
+            except ImportError:
+                raise ImportError("Please install bitsandbytes to use 8-bit Adam.")
+            optimizer_cls = bnb.optim.AdamW8bit
+        else:
+            optimizer_cls = torch.optim.AdamW
+        
+        optimizer = optimizer_cls(
+            trainable_layers.parameters(),
+            lr=config.train.learning_rate,
+            betas=(config.train.adam_beta1, config.train.adam_beta2),
+            weight_decay=config.train.adam_weight_decay,
+            eps=config.train.adam_epsilon,
+        )
     else:
-        optimizer_cls = torch.optim.AdamW
-    
-    optimizer = optimizer_cls(
-        trainable_layers.parameters(),
-        lr=config.train.learning_rate,
-        betas=(config.train.adam_beta1, config.train.adam_beta2),
-        weight_decay=config.train.adam_weight_decay,
-        eps=config.train.adam_epsilon,
-    )
+        if external_logger:
+            external_logger.info("Reusing optimizer from previous stage (keeping momentum/state in memory)")
     
     # Generate negative prompt embeddings
     neg_prompt_embed = pipeline.text_encoder(
@@ -196,7 +203,9 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     assert config.sample.batch_size >= config.train.batch_size
     assert config.sample.batch_size % config.train.batch_size == 0
     
-    # Load checkpoint state (optimizer, scaler, random states) if resuming
+    # Load checkpoint state (optimizer, scaler, random states) ONLY if resuming from checkpoint
+    # Note: resume_checkpoint_path is only provided for the FIRST resumed stage
+    # Subsequent stages keep the optimizer in memory without reloading from disk
     if resume_checkpoint_path:
         if external_logger:
             external_logger.info(f"Loading optimizer state from: {resume_checkpoint_path}")
@@ -414,4 +423,5 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     if external_logger:
         external_logger.info(f"Training completed for stage {stage_idx}")
     
-    return save_dir
+    # Return both save_dir and optimizer (optimizer persists in memory for next stage)
+    return save_dir, optimizer

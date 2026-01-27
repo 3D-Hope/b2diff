@@ -22,6 +22,7 @@ pipeline:
   split_step_right: 20
   save_interval: 2
   sleep_between_stages: 2
+  cleanup_images: true  # Remove images after each stage to save disk space
 
 # Split settings (will be calculated per stage)
 split_step: 14
