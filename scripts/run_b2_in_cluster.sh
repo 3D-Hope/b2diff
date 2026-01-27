@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=b2diffu_try2
+#SBATCH --job-name=inc_b2_100
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
@@ -138,12 +138,10 @@ echo "GPUs detected: ${NUM_GPUS}"
 #     train.no_branching=True \
 #     train.sample_incremental_steps_only=False \
 
-run_name="b2diffu_try2"
+run_name="inc_b2_100"
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
-    pipeline.continue_from_stage=89 \
-    wandb.resume_id="8vkxqtmc" \
-    train.incremental_training=False \
+    train.incremental_training=True \
     train.no_branching=False \
     train.sample_incremental_steps_only=False \
 
