@@ -85,6 +85,10 @@ class TrainingPipeline:
         # Initialize wandb at pipeline level (single run for all stages)
         if config.wandb.enabled:
             self.init_wandb()
+        else:
+            # Explicitly disable wandb when flag is False
+            wandb.init(mode="disabled")
+            logger.info("Wandb disabled (wandb.enabled=False)")
         
         # Load model ONCE for all stages
         self.load_model()
@@ -292,14 +296,16 @@ class TrainingPipeline:
             candidate_indices = np.arange(start_idx, total_timesteps)
             
             # Determine target count by stage range
-            if stage_idx < 15:
-                target_count = 5
-            elif stage_idx < 30:
-                target_count = 10
-            elif stage_idx < 45:
-                target_count = 15
-            else:
-                target_count = total_timesteps
+            # if stage_idx < 15:
+            #     target_count = 5
+            # elif stage_idx < 30:
+            #     target_count = 10
+            # elif stage_idx < 45:
+            #     target_count = 15
+            # else:
+            #     target_count = total_timesteps
+            # TODO: this is hack to do 5 step only training
+            target_count = 5
             
             if target_count < total_timesteps:
                 # Add uniformly spaced new indices until reaching target_count
@@ -444,7 +450,7 @@ class TrainingPipeline:
         self.save_metrics_history()
         self.create_summary_table()
         
-        # Log final metrics to wandb
+        # Log final metrics to wandb (only if enabled)
         if self.config.wandb.enabled and self.wandb_run:
             self.wandb_run.log({
                 "pipeline/total_time_seconds": total_time,

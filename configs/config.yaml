@@ -47,6 +47,7 @@ sample:
   batch_size: 16
   num_batches_per_epoch: 16
   save_interval: 2
+  no_branching: false
 
 # Training configuration
 train:
@@ -72,7 +73,7 @@ train:
   save_interval: 2
   num_checkpoint_limit: 21
   incremental_training: false # incremental training but the random timesteps in each loop
-  progressive_incremental_training: true # incremental training with fixed uniformly spread timesteps in each loop
+  # progressive_incremental_training: true # incremental training with fixed uniformly spread timesteps in each loop
 
 # Evaluation & Selection configuration
 eval:

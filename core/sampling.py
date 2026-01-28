@@ -216,7 +216,7 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
             # sample
             with autocast():
                 with torch.no_grad():
-                    if ((config.sample.num_steps-i) in split_steps):
+                    if config.sample.no_branching and ((config.sample.num_steps-i) in split_steps):
                         branch_num = split_steps.index(config.sample.num_steps-i)
                         branch_num = split_times[branch_num]
                         cur_sample_num = len(latents)

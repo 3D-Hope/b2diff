@@ -191,6 +191,8 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     
     # Load sample data
     samples = load_sample_stage(save_dir)
+    # prompt_embeds: [batch_size, seq_len, dim]
+    # timesteps: [batch_size, 14]
     accelerator.save_state()
     
     pipeline.scheduler.set_timesteps(config.sample.num_steps, device=accelerator.device)
@@ -210,22 +212,23 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         samples = {k: v[perm] for k, v in init_samples.items()}
         
         # Filter trajectories to only include specified timesteps for progressive training
-        if config.train.progressive_incremental_training and training_timesteps is not None:
-            if external_logger and accelerator.is_local_main_process:
-                external_logger.info(f"Filtering trajectories to timesteps: {training_timesteps}")
+        # print(f"shape of timesteps: {samples['timesteps'].shape}, indices of timesteps: {training_timesteps}")
+        # if config.train.progressive_incremental_training and training_timesteps is not None:
+        #     if external_logger and accelerator.is_local_main_process:
+        #         external_logger.info(f"Filtering trajectories to timesteps: {training_timesteps}")
             
-            # Convert training_timesteps to tensor indices if needed
-            if isinstance(training_timesteps, list):
-                timestep_indices = torch.tensor(training_timesteps, dtype=torch.long)
-            else:
-                timestep_indices = training_timesteps
+        #     # Convert training_timesteps to tensor indices if needed
+        #     if isinstance(training_timesteps, list):
+        #         timestep_indices = torch.tensor(training_timesteps, dtype=torch.long)
+        #     else:
+        #         timestep_indices = training_timesteps
             
-            # Filter trajectory data to only keep selected timesteps
-            for key in ["latents", "next_latents", "log_probs", "timesteps"]:
-                if key in samples:
-                    # samples[key] has shape [batch_size, num_timesteps, ...]
-                    # We want to keep only the timesteps at the specified indices
-                    samples[key] = samples[key][:, timestep_indices]
+        #     # Filter trajectory data to only keep selected timesteps
+        #     for key in ["latents", "next_latents", "log_probs", "timesteps"]:
+        #         if key in samples:
+        #             # samples[key] has shape [batch_size, num_timesteps, ...]
+        #             # We want to keep only the timesteps at the specified indices
+        #             samples[key] = samples[key][:, timestep_indices]
         
         # Shuffle timesteps (always shuffle, even for progressive training)
         current_num_timesteps = samples["timesteps"].shape[1]
@@ -259,15 +262,15 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
             
             # For progressive training, we already filtered, so iterate over all remaining timesteps
             # For regular incremental training, use the specified timestep indices
-            if config.train.progressive_incremental_training and training_timesteps is not None:
-                timestep_indices = range(sample["timesteps"].shape[1])
-            elif getattr(config.train, 'incremental_training', False) and training_timesteps is not None:
+            # if config.train.progressive_incremental_training and training_timesteps is not None:
+            #     timestep_indices = range(sample["timesteps"].shape[1])
+            if getattr(config.train, 'incremental_training', False) and training_timesteps is not None:
                 timestep_indices = training_timesteps
                 if external_logger and accelerator.is_local_main_process and idx == 0:
                     external_logger.info(f"Training on {len(timestep_indices)}/{sample['timesteps'].shape[1]} timesteps: {timestep_indices}")
             else:
                 timestep_indices = range(sample["timesteps"].shape[1])
-            print(f"shape of timesteps: {sample['timesteps'].shape}")
+            
             for t in tqdm(
                 timestep_indices,
                 desc="Timestep",
@@ -280,6 +283,7 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
                 with accelerator.accumulate(pipeline.unet):
                     with autocast():
                         if config.train.cfg:
+                            # print(f"timesteps {sample['timesteps'][:, t]}")
                             noise_pred = pipeline.unet(
                                 torch.cat([sample["latents"][:, t]] * 2),
                                 torch.cat([sample["timesteps"][:, t]] * 2),
@@ -340,8 +344,8 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
                     LossRecord[epoch][idx // config.train.batch_size].append(loss_value)
                     GradRecord[epoch][idx // config.train.batch_size].append(grad_value)
                     
-                    # Log to wandb
-                    if wandb_run and accelerator.is_main_process:
+                    # Log to wandb (only if enabled)
+                    if wandb_run and accelerator.is_main_process and config.wandb.enabled:
                         log_dict = {
                             "train/loss": loss_value,
                             "train/epoch": epoch,
@@ -364,8 +368,8 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         if accelerator.is_main_process:
             logger.info(f"Epoch {epoch + 1}/{config.train.num_epochs} completed")
             
-            # Log epoch-level metrics
-            if wandb_run:
+            # Log epoch-level metrics (only if enabled)
+            if wandb_run and config.wandb.enabled:
                 epoch_losses = [item for sublist in LossRecord[epoch] for item in sublist]
                 epoch_grads = [item for sublist in GradRecord[epoch] for item in sublist if item is not None]
                 wandb_run.log({
