@@ -209,9 +209,28 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         perm = torch.randperm(total_batch_size)
         samples = {k: v[perm] for k, v in init_samples.items()}
         
-        # Shuffle timesteps
+        # Filter trajectories to only include specified timesteps for progressive training
+        if config.train.progressive_incremental_training and training_timesteps is not None:
+            if external_logger and accelerator.is_local_main_process:
+                external_logger.info(f"Filtering trajectories to timesteps: {training_timesteps}")
+            
+            # Convert training_timesteps to tensor indices if needed
+            if isinstance(training_timesteps, list):
+                timestep_indices = torch.tensor(training_timesteps, dtype=torch.long)
+            else:
+                timestep_indices = training_timesteps
+            
+            # Filter trajectory data to only keep selected timesteps
+            for key in ["latents", "next_latents", "log_probs", "timesteps"]:
+                if key in samples:
+                    # samples[key] has shape [batch_size, num_timesteps, ...]
+                    # We want to keep only the timesteps at the specified indices
+                    samples[key] = samples[key][:, timestep_indices]
+        
+        # Shuffle timesteps (always shuffle, even for progressive training)
+        current_num_timesteps = samples["timesteps"].shape[1]
         perms = torch.stack(
-            [torch.randperm(init_samples["timesteps"].shape[1]) for _ in range(total_batch_size)]
+            [torch.randperm(current_num_timesteps) for _ in range(total_batch_size)]
         )
         for key in ["latents", "next_latents", "log_probs", "timesteps"]:
             samples[key] = samples[key][torch.arange(total_batch_size)[:, None], perms]
@@ -238,14 +257,17 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
             else:
                 embeds = sample["prompt_embeds"]
             
-            # Determine which timestep indices to train on
-            if getattr(config.train, 'incremental_training', False) and training_timesteps is not None:
+            # For progressive training, we already filtered, so iterate over all remaining timesteps
+            # For regular incremental training, use the specified timestep indices
+            if config.train.progressive_incremental_training and training_timesteps is not None:
+                timestep_indices = range(sample["timesteps"].shape[1])
+            elif getattr(config.train, 'incremental_training', False) and training_timesteps is not None:
                 timestep_indices = training_timesteps
                 if external_logger and accelerator.is_local_main_process and idx == 0:
                     external_logger.info(f"Training on {len(timestep_indices)}/{sample['timesteps'].shape[1]} timesteps: {timestep_indices}")
             else:
                 timestep_indices = range(sample["timesteps"].shape[1])
-
+            print(f"shape of timesteps: {sample['timesteps'].shape}")
             for t in tqdm(
                 timestep_indices,
                 desc="Timestep",
