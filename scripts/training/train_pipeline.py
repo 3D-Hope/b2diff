@@ -465,7 +465,7 @@ class TrainingPipeline:
                 wandb_run=self.wandb_run,
                 pipeline=self.pipeline,
                 trainable_layers=self.trainable_layers,
-                sampling_timestep_indices=training_timestep_indices
+                sampling_timestep_indices=training_timestep_indices if self.config.train.sample_incremental_steps_only else None  # inc: make sure None for inc b2
             )
             logger.info(f"[{stage_idx}] Sampling completed")
             
@@ -484,7 +484,7 @@ class TrainingPipeline:
                 wandb_run=self.wandb_run,
                 pipeline=self.pipeline,
                 trainable_layers=self.trainable_layers,
-                training_timesteps=training_timestep_indices,
+                training_timesteps=training_timestep_indices, 
                 resume_checkpoint_path=self.resume_checkpoint_path if stage_idx == self.config.pipeline.continue_from_stage else None,
                 optimizer=self.optimizer  # Pass existing optimizer (None on first stage)
             )

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=inc_b2_100
+#SBATCH --job-name=test_inc_b2_newcode
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
@@ -138,7 +138,7 @@ echo "GPUs detected: ${NUM_GPUS}"
 #     train.no_branching=True \
 #     train.sample_incremental_steps_only=False \
 
-run_name="inc_b2_100"
+run_name="test_inc_b2_newcode"
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
     train.incremental_training=True \

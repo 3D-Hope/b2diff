@@ -319,9 +319,9 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     num_generated = len(raw_clip_scores)
     num_rejected = num_generated - num_selected
     
-    # In no-branching mode, positive/negative metrics don't apply (all samples kept)
+    # In no-branching mode, (all samples kept)
     if no_branching_mode:
-        num_positive = num_selected  # All samples are kept
+        num_positive = 0
         num_negative = 0
     else:
         num_positive = int((data.get('eval_scores', torch.tensor([])) >= config.eval.pos_threshold).sum()) if len(data.get('eval_scores', [])) > 0 else 0
