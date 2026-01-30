@@ -24,7 +24,7 @@ tqdm = partial(tqdm_lib, dynamic_ncols=True)
 logger = get_logger(__name__)
 
 
-def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, pipeline=None, trainable_layers=None, training_timesteps=None):
+def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, pipeline=None, trainable_layers=None, training_timesteps=None, resume_from_ckpt=False):
     """
     Run the training phase for a given stage.
     
@@ -128,6 +128,35 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
     
+    
+    # Load checkpoint if resume_from_ckpt is True
+    if resume_from_ckpt:
+        print("loading model. Please Wait.")
+        # Build checkpoint path from previous stage
+        prev_stage = stage_idx - 1
+        checkpoint_num = config.train.num_epochs // config.train.save_interval
+        checkpoint_path = os.path.join(
+            config.save_path,
+            config.exp_name,
+            f"stage{prev_stage}",
+            "checkpoints",
+            f"checkpoint_{checkpoint_num}"
+        )
+        
+        checkpoint_path = os.path.normpath(os.path.expanduser(checkpoint_path))
+        if "checkpoint_" not in os.path.basename(checkpoint_path):
+            # get the most recent checkpoint in this directory
+            checkpoints = list(filter(lambda x: "checkpoint_" in x, os.listdir(checkpoint_path)))
+            if len(checkpoints) == 0:
+                raise ValueError(f"No checkpoints found in {checkpoint_path}")
+            checkpoint_path = os.path.join(
+                checkpoint_path,
+                sorted(checkpoints, key=lambda x: int(x.split("_")[-1]))[-1],
+            )
+        print(f"Resuming from {checkpoint_path}")
+        accelerator.load_state(checkpoint_path)
+        print("load successfully!")
+
     if config.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
     

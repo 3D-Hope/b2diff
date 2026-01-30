@@ -25,7 +25,7 @@ from utils.utils import post_processing, seed_everything
 tqdm = partial(tqdm_lib, dynamic_ncols=True)
 
 
-def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=None, trainable_layers=None):
+def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=None, trainable_layers=None, resume_from_ckpt=False):
     """
     Run the sampling phase for a given stage.
     
@@ -53,7 +53,8 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
     
     print(f'========== seed: {config.seed} ==========') 
     torch.cuda.set_device(config.dev_id)
-    
+    if config.sample.no_branching:
+        config.sample.batch_size = config.sample.batch_size * 2
     # Setup directories
     unique_id = config.exp_name
     os.makedirs(os.path.join(config.save_path, unique_id), exist_ok=True)
@@ -88,10 +89,72 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
     #     inference_dtype = torch.float16
     # elif accelerator.mixed_precision == "bf16":
     #     inference_dtype = torch.bfloat16
+    def save_model_hook(models, weights, output_dir):
+        assert len(models) == 1
+        if config.use_lora and isinstance(models[0], AttnProcsLayers):
+            pipeline.unet.save_attn_procs(output_dir)
+        elif not config.use_lora and isinstance(models[0], UNet2DConditionModel):
+            models[0].save_pretrained(os.path.join(output_dir, "unet"))
+        else:
+            raise ValueError(f"Unknown model type {type(models[0])}")
+        weights.pop()  # ensures that accelerate doesn't try to handle saving of the model
+
+    def load_model_hook(models, input_dir):
+        assert len(models) == 1
+        # print(models)
+        if config.use_lora and isinstance(models[0], AttnProcsLayers):
+            tmp_unet = UNet2DConditionModel.from_pretrained(
+                config.pretrained.model, revision=config.pretrained.revision, subfolder="unet"
+            )
+            
+            tmp_unet.load_attn_procs(input_dir)
+            models[0].load_state_dict(AttnProcsLayers(tmp_unet.attn_processors).state_dict())
+            del tmp_unet
+        elif not config.use_lora and isinstance(models[0], UNet2DConditionModel):
+            load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
+            models[0].register_to_config(**load_model.config)
+            models[0].load_state_dict(load_model.state_dict())
+            del load_model
+        else:
+            raise ValueError(f"Unknown model type {type(models[0])}")
+        models.pop()  # ensures that accelerate doesn't try to handle loading of the model
+    
+    accelerator.register_save_state_pre_hook(save_model_hook)
+    accelerator.register_load_state_pre_hook(load_model_hook)
+    
+
     
     # Prepare trainable layers (if not already prepared)
     if trainable_layers is not None and not hasattr(trainable_layers, '_hf_hook'):
         trainable_layers = accelerator.prepare(trainable_layers)
+    
+    # Load checkpoint if resume_from_ckpt is True
+    if resume_from_ckpt:
+        print("loading model. Please Wait.")
+        # Build checkpoint path from previous stage
+        prev_stage = stage_idx - 1
+        checkpoint_num = config.train.num_epochs // config.train.save_interval
+        checkpoint_path = os.path.join(
+            config.save_path,
+            config.exp_name,
+            f"stage{prev_stage}",
+            "checkpoints",
+            f"checkpoint_{checkpoint_num}"
+        )
+        
+        checkpoint_path = os.path.normpath(os.path.expanduser(checkpoint_path))
+        if "checkpoint_" not in os.path.basename(checkpoint_path):
+            # get the most recent checkpoint in this directory
+            checkpoints = list(filter(lambda x: "checkpoint_" in x, os.listdir(checkpoint_path)))
+            if len(checkpoints) == 0:
+                raise ValueError(f"No checkpoints found in {checkpoint_path}")
+            checkpoint_path = os.path.join(
+                checkpoint_path,
+                sorted(checkpoints, key=lambda x: int(x.split("_")[-1]))[-1],
+            )
+        print(f"Resuming from {checkpoint_path}")
+        accelerator.load_state(checkpoint_path)
+        print("load successfully!")
     
     if config.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True

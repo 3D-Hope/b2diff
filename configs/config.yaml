@@ -11,7 +11,7 @@ save_path: "./model/lora"
 mixed_precision: "fp16"
 allow_tf32: false
 use_lora: true
-resume_from: ""
+resume_id: "" #wandb run id to resume from
 dev_id: 0
 
 # Pipeline settings (from bash script)

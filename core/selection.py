@@ -241,6 +241,9 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
                     used_idx = min_idx[j]
                     used_idx_2 = j * config.split_time + min_idx[j]
                 else:
+                    if config.sample.no_branching:
+                        used_idx = min_idx[j]
+                        used_idx_2 = j * config.split_time + min_idx[j]
                     continue
                 
                 data['prompt_embeds'].append(prompt_embeds[used_idx_2])

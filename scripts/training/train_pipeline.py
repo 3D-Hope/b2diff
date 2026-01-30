@@ -93,9 +93,6 @@ class TrainingPipeline:
         # Load model ONCE for all stages
         self.load_model()
         
-        # If resuming from a stage > 0, load the checkpoint from previous stage
-        if config.pipeline.continue_from_stage > 0:
-            self.load_resume_checkpoint(config.pipeline.continue_from_stage)
     
     def setup_directories(self):
         """Create necessary directories."""
@@ -108,15 +105,26 @@ class TrainingPipeline:
     
     def init_wandb(self):
         """Initialize wandb for pipeline-level tracking (single run for all stages)."""
-        self.wandb_run = wandb.init(
-            project=self.config.wandb.project,
-            entity=self.config.wandb.entity,
-            name=f"{self.config.exp_name}",
-            config=OmegaConf.to_container(self.config, resolve=True),
-            tags=["pipeline", self.config.exp_name],
-            reinit=False,  # Use same run throughout
-        )
-        logger.info("Wandb initialized for pipeline tracking (single run for all stages)")
+        if self.config.resume_id:
+            self.wandb_run = wandb.init(
+                project=self.config.wandb.project,
+                entity=self.config.wandb.exi,
+                id=self.config.resume_id,
+                resume="must",
+                config=OmegaConf.to_container(self.config, resolve=True),
+                reinit=False,
+            )
+            logger.info(f"Wandb resumed from run ID: {self.config.resume_id}")
+        else:
+            self.wandb_run = wandb.init(
+                project=self.config.wandb.project,
+                entity=self.config.wandb.entity,
+                name=f"{self.config.exp_name}",
+                config=OmegaConf.to_container(self.config, resolve=True),
+                tags=["pipeline", self.config.exp_name],
+                reinit=False,  # Use same run throughout
+            )
+            logger.info("Wandb initialized for pipeline tracking (single run for all stages)")
     
     def load_model(self):
         """Load model once at the start - reused for all stages."""
@@ -181,56 +189,6 @@ class TrainingPipeline:
         
         logger.info("✓ Model loaded and ready for all stages")
     
-    def load_resume_checkpoint(self, resume_stage_idx: int):
-        """Load checkpoint from previous stage when resuming.
-        
-        Args:
-            resume_stage_idx: The stage we want to resume from
-        """
-        prev_stage = resume_stage_idx - 1
-        checkpoint_num = self.config.train.num_epochs // self.config.train.save_interval
-        checkpoint_path = os.path.join(
-            self.config.save_path,
-            self.config.exp_name,
-            f"stage{prev_stage}",
-            "checkpoints",
-            f"checkpoint_{checkpoint_num}"
-        )
-        
-        if not os.path.exists(checkpoint_path):
-            logger.warning(f"Resume checkpoint not found: {checkpoint_path}")
-            logger.warning(f"Starting from scratch instead of resuming from stage {resume_stage_idx}")
-            return
-        
-        logger.info(f"Loading checkpoint from stage {prev_stage}: {checkpoint_path}")
-        
-        if self.config.use_lora:
-            # Load LoRA weights following the original pattern
-            from diffusers import UNet2DConditionModel
-            from diffusers.loaders import AttnProcsLayers
-            
-            tmp_unet = UNet2DConditionModel.from_pretrained(
-                self.config.pretrained.model,
-                revision=self.config.pretrained.revision,
-                subfolder="unet"
-            )
-            tmp_unet.load_attn_procs(checkpoint_path)
-            self.trainable_layers.load_state_dict(
-                AttnProcsLayers(tmp_unet.attn_processors).state_dict()
-            )
-            del tmp_unet
-            logger.info(f"✓ Resumed LoRA weights from stage {prev_stage}")
-        else:
-            # Load full UNet weights
-            from diffusers import UNet2DConditionModel
-            loaded_unet = UNet2DConditionModel.from_pretrained(
-                checkpoint_path,
-                subfolder="unet"
-            )
-            self.pipeline.unet.register_to_config(**loaded_unet.config)
-            self.pipeline.unet.load_state_dict(loaded_unet.state_dict())
-            del loaded_unet
-            logger.info(f"✓ Resumed UNet weights from stage {prev_stage}")
     
     def calculate_split_step(self, stage_idx: int) -> int:
         """
@@ -266,7 +224,7 @@ class TrainingPipeline:
         
         return stage_config
     
-    def run_stage(self, stage_idx: int):
+    def run_stage(self, stage_idx: int, resume_from_ckpt: bool = False):
         """
         Run a complete stage (sample -> select -> train).
         
@@ -305,7 +263,7 @@ class TrainingPipeline:
             else:
                 target_count = total_timesteps
             # TODO: this is hack to do 5 step only training
-            # target_count = 5
+            target_count = 5
             
             if target_count < total_timesteps:
                 # Add uniformly spaced new indices until reaching target_count
@@ -337,7 +295,8 @@ class TrainingPipeline:
                 stage_config, stage_idx, logger, 
                 wandb_run=self.wandb_run,
                 pipeline=self.pipeline,
-                trainable_layers=self.trainable_layers
+                trainable_layers=self.trainable_layers,
+                resume_from_ckpt=resume_from_ckpt
             )
             logger.info(f"[{stage_idx}] Sampling completed")
             
@@ -356,7 +315,8 @@ class TrainingPipeline:
                 wandb_run=self.wandb_run,
                 pipeline=self.pipeline,
                 trainable_layers=self.trainable_layers,
-                training_timesteps=training_timestep_indices
+                training_timesteps=training_timestep_indices,
+                resume_from_ckpt=resume_from_ckpt
             )
             logger.info(f"[{stage_idx}] Training completed")
             
@@ -430,6 +390,9 @@ class TrainingPipeline:
         logger.info(f"Split step range: [{self.config.pipeline.split_step_left}, {self.config.pipeline.split_step_right}]")
         
         # Run stages
+        if self.config.pipeline.continue_from_stage > 0:
+            self.run_stage(self.config.pipeline.continue_from_stage - 1, resume_from_ckpt=True)
+            self.config.pipeline.continue_from_stage += 1
         for stage_idx in range(self.config.pipeline.continue_from_stage, self.config.pipeline.stage_cnt):
             self.run_stage(stage_idx)
         
