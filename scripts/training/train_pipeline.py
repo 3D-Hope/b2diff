@@ -224,6 +224,51 @@ class TrainingPipeline:
         
         return stage_config
     
+    def cleanup_stage_files(self, save_dir: str, stage_idx: int):
+        """
+        Remove large temporary files after stage completion to save disk space.
+        
+        Keeps:
+        - checkpoints/ (essential model weights)
+        - eval/ (metrics)
+        - prompt.json (lightweight)
+        
+        Removes:
+        - sample.pkl (large diffusion trajectory data)
+        - sample_stage.pkl (selected samples data)
+        - images/ (generated PNG files)
+        
+        Args:
+            save_dir: Stage directory path
+            stage_idx: Current stage index
+        """
+        import shutil
+        
+        files_to_remove = [
+            os.path.join(save_dir, 'sample.pkl'),
+            os.path.join(save_dir, 'sample_stage.pkl'),
+        ]
+        
+        dirs_to_remove = [
+            os.path.join(save_dir, 'images'),
+        ]
+        
+        total_size_freed = 0
+        
+        # Remove files
+        for file_path in files_to_remove:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        
+        # Remove directories
+        for dir_path in dirs_to_remove:
+            if os.path.exists(dir_path):
+                try:
+                    shutil.rmtree(dir_path)
+                except Exception as e:
+                    logger.warning(f"Could not remove {dir_path}: {e}")
+        
+    
     def run_stage(self, stage_idx: int, resume_from_ckpt: bool = False):
         """
         Run a complete stage (sample -> select -> train).
@@ -318,6 +363,10 @@ class TrainingPipeline:
                 training_timesteps=training_timestep_indices,
             )
             logger.info(f"[{stage_idx}] Training completed")
+            
+            # Step 4: Cleanup temporary files to save disk space
+            logger.info(f"[{stage_idx}] Cleaning up temporary files...")
+            self.cleanup_stage_files(save_dir, stage_idx)
             
             # Calculate stage time
             stage_time = time.time() - stage_start_time
