@@ -5,8 +5,10 @@ Based on: https://github.com/sbarratt/inception-score-pytorch/blob/master/incept
 """
 
 import os
+import sys
 import json
 import argparse
+import gc
 import torch
 import torch.nn.functional as F
 import open_clip
@@ -14,8 +16,16 @@ from PIL import Image
 from torch.utils.data import Dataset
 import numpy as np
 from scipy.stats import entropy
-from diffusers import StableDiffusionPipeline
+from diffusers import StableDiffusionPipeline, DDIMScheduler
+from diffusers.models.attention_processor import LoRAAttnProcessor
 from tqdm import tqdm
+
+# Add project root to path for imports
+script_path = os.path.abspath(__file__)
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(script_path)))
+sys.path.append(project_root)
+from diffusion.ddim_with_logprob import ddim_step_with_logprob, latents_decode
+from utils.utils import seed_everything
 
 
 class ImageDataset(Dataset):
@@ -229,11 +239,10 @@ def sample_and_compute_is_baseline(
     return is_mean, is_std
 
 
-def main():
+def main(image_dir):
     # Configuration
-    image_dir = "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/exp_B2DiffuRL_test/stage99/images"
     batch_size = 32
-    splits = 1
+    splits = 10
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
@@ -279,62 +288,122 @@ def main():
     print(f"\nResults saved to: {output_file}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Compute Inception Score using CLIP")
-    parser.add_argument(
-        "--mode",
-        type=str,
-        choices=["existing", "baseline"],
-        default="baseline",
-        help="Mode: 'existing' to compute IS on existing images, 'baseline' to generate and compute IS for baseline SD v1-4"
-    )
-    parser.add_argument(
-        "--image_dir",
-        type=str,
-        default="/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/exp_B2DiffuRL_test/stage99/images",
-        help="Directory containing images (for 'existing' mode)"
-    )
-    parser.add_argument(
-        "--num_images",
-        type=int,
-        default=1000,
-        help="Number of images to generate (for 'baseline' mode)"
-    )
-    parser.add_argument(
-        "--prompt_file",
-        type=str,
-        default="config/prompt/template1_train.json",
-        help="Path to prompt file (for 'baseline' mode)"
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="outputs/baseline_sd14_samples",
-        help="Output directory for generated images (for 'baseline' mode)"
-    )
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=8,
-        help="Batch size for generation (for 'baseline' mode) or IS computation (for 'existing' mode)"
-    )
-    parser.add_argument(
-        "--splits",
-        type=int,
-        default=10,
-        help="Number of splits for IS computation"
-    )
+    img_dir = "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/only_5_steps/images"
+    main(img_dir)
+#     parser = argparse.ArgumentParser(description="Compute Inception Score using CLIP")
+#     parser.add_argument(
+#         "--mode",
+#         type=str,
+#         choices=["existing", "baseline", "lora"],
+#         default="lora",
+#         help="Mode: 'existing' to compute IS on existing images, 'baseline' to generate and compute IS for baseline SD v1-4, 'lora' to generate from LoRA checkpoint and compute IS"
+#     )
+#     parser.add_argument(
+#         "--image_dir",
+#         type=str,
+#         default="/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/test",
+#         help="Directory containing images (for 'existing' mode)"
+#     )
+#     parser.add_argument(
+#         "--checkpoint_path",
+#         type=str,
+#         default="/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/only_5_steps/pytorch_lora_weights.safetensors",
+#         help="Path to LoRA checkpoint (for 'lora' mode)"
+#     )
+#     parser.add_argument(
+#         "--output_dir",
+#         type=str,
+#         default="/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/only_5_steps/images",
+#         help="Output directory for generated images (for 'lora' mode)"
+#     )
+#     parser.add_argument(
+#         "--num_images",
+#         type=int,
+#         default=1000,
+#         help="Number of images to generate (for 'baseline' and 'lora' modes)"
+#     )
+#     parser.add_argument(
+#         "--prompt_file",
+#         type=str,
+#         default="configs/prompt/template1_train.json",
+#         help="Path to prompt file (for 'baseline' and 'lora' modes)"
+#     )
+#     parser.add_argument(
+#         "--base_model",
+#         type=str,
+#         default="CompVis/stable-diffusion-v1-4",
+#         help="Base model for generation (for 'lora' mode)"
+#     )
+#     parser.add_argument(
+#         "--gen_batch_size",
+#         type=int,
+#         default=4,
+#         help="Batch size for generation (for 'baseline' and 'lora' modes)"
+#     )
+#     parser.add_argument(
+#         "--eval_batch_size",
+#         type=int,
+#         default=32,
+#         help="Batch size for IS computation"
+#     )
+#     parser.add_argument(
+#         "--num_inference_steps",
+#         type=int,
+#         default=20,
+#         help="Number of inference steps (for 'lora' mode)"
+#     )
+#     parser.add_argument(
+#         "--guidance_scale",
+#         type=float,
+#         default=5.0,
+#         help="Guidance scale (for 'lora' mode)"
+#     )
+#     parser.add_argument(
+#         "--eta",
+#         type=float,
+#         default=1.0,
+#         help="DDIM eta parameter (for 'lora' mode)"
+#     )
+#     parser.add_argument(
+#         "--seed",
+#         type=int,
+#         default=300,
+#         help="Random seed (for 'lora' mode)"
+#     )
+#     parser.add_argument(
+#         "--splits",
+#         type=int,
+#         default=10,
+#         help="Number of splits for IS computation"
+#     )
     
-    args = parser.parse_args()
+#     args = parser.parse_args()
     
-    if args.mode == "baseline":
-        # Generate images from baseline and compute IS
-        sample_and_compute_is_baseline(
-            num_images=args.num_images,
-            prompt_file=args.prompt_file,
-            output_dir=args.output_dir,
-            batch_size=args.batch_size,
-            splits=args.splits
-        )
-    else:
-        # Compute IS on existing images
-        main()
+#     if args.mode == "lora":
+#         # Generate images from LoRA checkpoint and compute IS
+#         sample_and_compute_is_lora(
+#             checkpoint_path=args.checkpoint_path,
+#             output_dir=args.output_dir,
+#             prompt_file=args.prompt_file,
+#             num_images=args.num_images,
+#             base_model=args.base_model,
+#             gen_batch_size=args.gen_batch_size,
+#             num_inference_steps=args.num_inference_steps,
+#             guidance_scale=args.guidance_scale,
+#             eta=args.eta,
+#             seed=args.seed,
+#             eval_batch_size=args.eval_batch_size,
+#             splits=args.splits
+#         )
+#     elif args.mode == "baseline":
+#         # Generate images from baseline and compute IS
+#         sample_and_compute_is_baseline(
+#             num_images=args.num_images,
+#             prompt_file=args.prompt_file,
+#             output_dir=args.output_dir if args.output_dir != "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/b2diffu_try2/inference_results_88_ckpt" else "outputs/baseline_sd14_samples",
+#             batch_size=args.gen_batch_size,
+#             splits=args.splits
+#         )
+#     else:
+#         # Compute IS on existing images
+#         main(args.image_dir)
