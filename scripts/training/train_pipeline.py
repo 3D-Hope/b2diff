@@ -108,7 +108,7 @@ class TrainingPipeline:
         if self.config.resume_id:
             self.wandb_run = wandb.init(
                 project=self.config.wandb.project,
-                entity=self.config.wandb.exi,
+                entity=self.config.wandb.entity,
                 id=self.config.resume_id,
                 resume="must",
                 config=OmegaConf.to_container(self.config, resolve=True),
