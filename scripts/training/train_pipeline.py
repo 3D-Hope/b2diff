@@ -316,7 +316,6 @@ class TrainingPipeline:
                 pipeline=self.pipeline,
                 trainable_layers=self.trainable_layers,
                 training_timesteps=training_timestep_indices,
-                resume_from_ckpt=resume_from_ckpt
             )
             logger.info(f"[{stage_idx}] Training completed")
             
@@ -391,7 +390,7 @@ class TrainingPipeline:
         
         # Run stages
         if self.config.pipeline.continue_from_stage > 0:
-            self.run_stage(self.config.pipeline.continue_from_stage - 1, resume_from_ckpt=True)
+            self.run_stage(self.config.pipeline.continue_from_stage, resume_from_ckpt=True)
             self.config.pipeline.continue_from_stage += 1
         for stage_idx in range(self.config.pipeline.continue_from_stage, self.config.pipeline.stage_cnt):
             self.run_stage(stage_idx)
