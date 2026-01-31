@@ -186,6 +186,8 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     # Evaluate scores
     img_dir = os.path.join(save_dir, 'images')
     eval_scores, score_metrics, raw_clip_scores = score_fn1(ground, img_dir, save_dir, config)
+    print(f"{raw_clip_scores=}")
+    print(f"{eval_scores=}")
     samples['eval_scores'] = eval_scores  # Normalized scores for training
     
     # Initialize data structure for selected samples
@@ -214,7 +216,7 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
         
         # When incremental training is enabled, keep the full trajectory
         # Otherwise, preserve original behavior (use last `split_step` timesteps)
-        if hasattr(config, 'train') and getattr(config.train, 'incremental_training', False):
+        if hasattr(config, 'train') and (getattr(config.train, 'incremental_training', False)):
             t_left = 0
             t_right = config.sample.num_steps
         else:
@@ -241,9 +243,11 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
                     used_idx = min_idx[j]
                     used_idx_2 = j * config.split_time + min_idx[j]
                 else:
-                    if config.sample.no_branching:
-                        used_idx = min_idx[j]
-                        used_idx_2 = j * config.split_time + min_idx[j]
+                    # if config.sample.no_branching: # this is to allow all the samples regardless of the score to be in training data in no_branching mode
+                    #     used_idx = min_idx[j]
+                    #     used_idx_2 = j * config.split_time + min_idx[j]
+                    # else:
+                    #     continue
                     continue
                 
                 data['prompt_embeds'].append(prompt_embeds[used_idx_2])

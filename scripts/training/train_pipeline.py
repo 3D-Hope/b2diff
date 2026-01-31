@@ -299,14 +299,14 @@ class TrainingPipeline:
             candidate_indices = np.arange(start_idx, total_timesteps)
             
             # Determine target count by stage range
-            if stage_idx < 15:
-                target_count = 5
-            elif stage_idx < 30:
-                target_count = 10
-            elif stage_idx < 45:
-                target_count = 15
-            else:
-                target_count = total_timesteps
+            # if stage_idx < 15:
+            #     target_count = 5
+            # elif stage_idx < 30:
+            #     target_count = 10
+            # elif stage_idx < 45:
+            #     target_count = 15
+            # else:
+            #     target_count = total_timesteps
             # TODO: this is hack to do 5 step only training
             target_count = 5
             

@@ -53,8 +53,6 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
     
     print(f'========== seed: {config.seed} ==========') 
     torch.cuda.set_device(config.dev_id)
-    if config.sample.no_branching:
-        config.sample.batch_size = config.sample.batch_size * 2
     # Setup directories
     unique_id = config.exp_name
     os.makedirs(os.path.join(config.save_path, unique_id), exist_ok=True)
@@ -266,8 +264,26 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
         ts = pipeline.scheduler.timesteps
         extra_step_kwargs = pipeline.prepare_extra_step_kwargs(None, config.sample.eta)
         
-        latents = [[noise_latents1]]
-        log_probs = [[]]
+        # For no_branching mode, prepare multiple different initial noises
+        if config.sample.no_branching:
+            branch_num = split_times[0]  # Get branching factor
+            noise_latents_list = [noise_latents1]  # Keep first noise
+            for _ in range(branch_num - 1):
+                additional_noise = pipeline.prepare_latents(
+                    config.sample.batch_size, 
+                    pipeline.unet.config.in_channels,
+                    pipeline.unet.config.sample_size * pipeline.vae_scale_factor,
+                    pipeline.unet.config.sample_size * pipeline.vae_scale_factor,
+                    prompt_embeds1.dtype, 
+                    accelerator.device, 
+                    None
+                )
+                noise_latents_list.append(additional_noise)
+            latents = [[noise] for noise in noise_latents_list]
+            log_probs = [[] for _ in range(branch_num)]  # Initialize log_probs for each branch
+        else:
+            latents = [[noise_latents1]]
+            log_probs = [[]]
 
         for i, t in tqdm(
             enumerate(ts),
