@@ -125,10 +125,18 @@ def score_fn1(ground, img_dir, save_dir, config):
     print(data_mean)
     
     # Normalize scores
-    sum_scores = [
-        (s - data_mean[ground[idx]]) / (data_std[ground[idx]] + 1e-8) 
-        for idx, s in enumerate(R)
-    ]
+    if config.sample.normalize_all:
+        overall_mean = R.mean().item()
+        overall_std = R.std().item()
+        sum_scores = [
+            (s - overall_mean) / (overall_std + 1e-8) 
+            for s in R
+        ]
+    else:
+        sum_scores = [
+            (s - data_mean[ground[idx]]) / (data_std[ground[idx]] + 1e-8) 
+            for idx, s in enumerate(R)
+        ]
     sum_scores = torch.tensor(sum_scores)
     
     # Prepare metrics for logging

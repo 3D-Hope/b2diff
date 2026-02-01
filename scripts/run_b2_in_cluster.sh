@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=no_branching_no_selection_only_5_steps
+#SBATCH --job-name=norm_all_no_branching_no_selection_only_5_steps
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
@@ -129,13 +129,16 @@ fi
 echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="no_branching_no_selection_only_5_steps"
+run_name="norm_all_no_branching_no_selection_only_5_steps"
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
     train.incremental_training=true \
     seed=42 \
     sample.no_branching=true \
     sample.no_selection=true \
+    split_time=1 \
+    sample.batch_size=48 \
+    train.batch_size=24
     # pipeline.stage_cnt=150
     # pipeline.continue_from_stage=110 \
     # resume_id="tg2dp40a" \
