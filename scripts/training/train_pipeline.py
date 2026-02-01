@@ -308,7 +308,7 @@ class TrainingPipeline:
             # else:
             #     target_count = total_timesteps
             # TODO: this is hack to do 5 step only training
-            target_count = 10
+            target_count = 5
             
             if target_count < total_timesteps:
                 # Add uniformly spaced new indices until reaching target_count

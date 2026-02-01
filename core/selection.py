@@ -243,12 +243,12 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
                     used_idx = min_idx[j]
                     used_idx_2 = j * config.split_time + min_idx[j]
                 else:
-                    # if config.sample.no_branching: # this is to allow all the samples regardless of the score to be in training data in no_branching mode
-                    #     used_idx = min_idx[j]
-                    #     used_idx_2 = j * config.split_time + min_idx[j]
-                    # else:
-                    #     continue
-                    continue
+                    if config.sample.no_selection: # this is to allow all the samples regardless of the score to be in training data in no_branching mode
+                        used_idx = min_idx[j]
+                        used_idx_2 = j * config.split_time + min_idx[j]
+                    else:
+                        continue
+                    # continue
                 
                 data['prompt_embeds'].append(prompt_embeds[used_idx_2])
                 data['timesteps'].append(timesteps[used_idx_2])

@@ -48,6 +48,7 @@ sample:
   num_batches_per_epoch: 16
   save_interval: 2
   no_branching: false
+  no_selection: false
 
 # Training configuration
 train:
