@@ -211,6 +211,8 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     
     data = get_new_unit()
     if config.sample.fk:
+        t_left = 0
+        t_right = config.sample.num_steps
         # Just save everything
         data = {
             'prompt_embeds': samples['prompt_embeds'],
