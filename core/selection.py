@@ -210,62 +210,76 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
         }
     
     data = get_new_unit()
-    
-    # Select positive and negative samples
-    total_batch_size = samples['eval_scores'].shape[0]
-    data_size = total_batch_size // config.sample.batch_size
-    
-    for b in range(config.sample.batch_size):
-        cur_sample_num = 1
-        batch_samples = {
-            k: v[torch.arange(b, total_batch_size, config.sample.batch_size)] 
-            for k, v in samples.items()
+    if config.sample.fk:
+        # Just save everything
+        data = {
+            'prompt_embeds': samples['prompt_embeds'],
+            'timesteps': samples['timesteps'][:, t_left:t_right],
+            'log_probs': samples['log_probs'][:, t_left:t_right],
+            'latents': samples['latents'][:, t_left:t_right],
+            'next_latents': samples['next_latents'][:, t_left:t_right],
+            'eval_scores': samples['eval_scores']
         }
-        
-        # When incremental training is enabled, keep the full trajectory
-        # Otherwise, preserve original behavior (use last `split_step` timesteps)
-        if hasattr(config, 'train') and (getattr(config.train, 'incremental_training', False)):
-            t_left = 0
-            t_right = config.sample.num_steps
+    
+    else:# Select positive and negative samples
+        total_batch_size = samples['eval_scores'].shape[0]
+        if config.sample.fk:
+            data_size = total_batch_size // (config.sample.batch_size*4*2)
         else:
-            t_left = config.sample.num_steps - config.split_step
-            t_right = config.sample.num_steps
+            data_size = total_batch_size // (config.sample.batch_size)
         
-        prompt_embeds = batch_samples['prompt_embeds'][torch.arange(0, data_size, cur_sample_num)]
-        timesteps = batch_samples['timesteps'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
-        log_probs = batch_samples['log_probs'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
-        latents = batch_samples['latents'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
-        next_latents = batch_samples['next_latents'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
-        
-        score = batch_samples['eval_scores'][torch.arange(0, data_size, cur_sample_num)]
-        score = score.reshape(-1, config.split_time)
-        max_idx = score.argmax(dim=1)
-        min_idx = score.argmin(dim=1)
-        
-        for j, s in enumerate(score):
-            for p_n in range(2):
-                if p_n == 0 and s[max_idx[j]] >= config.eval.pos_threshold:
-                    used_idx = max_idx[j]
-                    used_idx_2 = j * config.split_time + max_idx[j]
-                elif p_n == 1 and s[min_idx[j]] < config.eval.neg_threshold:
-                    used_idx = min_idx[j]
-                    used_idx_2 = j * config.split_time + min_idx[j]
-                else:
-                    if config.sample.no_selection: # this is to allow all the samples regardless of the score to be in training data in no_branching mode
+        batch_size = config.sample.batch_size if not config.sample.fk else config.sample.batch_size*4*2
+        for b in range(batch_size):
+            cur_sample_num = 1
+            batch_samples = {
+                k: v[torch.arange(b, total_batch_size, batch_size)] 
+                for k, v in samples.items()
+            }
+            
+            # When incremental training is enabled, keep the full trajectory
+            # Otherwise, preserve original behavior (use last `split_step` timesteps)
+            if hasattr(config, 'train') and (getattr(config.train, 'incremental_training', False)):
+                t_left = 0
+                t_right = config.sample.num_steps
+            else:
+                t_left = config.sample.num_steps - config.split_step
+                t_right = config.sample.num_steps
+            
+            prompt_embeds = batch_samples['prompt_embeds'][torch.arange(0, data_size, cur_sample_num)]
+            timesteps = batch_samples['timesteps'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
+            log_probs = batch_samples['log_probs'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
+            latents = batch_samples['latents'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
+            next_latents = batch_samples['next_latents'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
+            
+            score = batch_samples['eval_scores'][torch.arange(0, data_size, cur_sample_num)]
+            score = score.reshape(-1, config.split_time)
+            max_idx = score.argmax(dim=1)
+            min_idx = score.argmin(dim=1)
+            
+            for j, s in enumerate(score):
+                for p_n in range(2):
+                    if p_n == 0 and s[max_idx[j]] >= config.eval.pos_threshold:
+                        used_idx = max_idx[j]
+                        used_idx_2 = j * config.split_time + max_idx[j]
+                    elif p_n == 1 and s[min_idx[j]] < config.eval.neg_threshold:
                         used_idx = min_idx[j]
                         used_idx_2 = j * config.split_time + min_idx[j]
                     else:
-                        continue
-                    # continue
-                
-                data['prompt_embeds'].append(prompt_embeds[used_idx_2])
-                data['timesteps'].append(timesteps[used_idx_2])
-                data['log_probs'].append(log_probs[used_idx_2])
-                data['latents'].append(latents[used_idx_2])
-                data['next_latents'].append(next_latents[used_idx_2])
-                data['eval_scores'].append(s[used_idx])
-        
-        cur_sample_num *= config.split_time
+                        if config.sample.no_selection: # this is to allow all the samples regardless of the score to be in training data in no_branching mode
+                            used_idx = min_idx[j]
+                            used_idx_2 = j * config.split_time + min_idx[j]
+                        else:
+                            continue
+                        # continue
+                    
+                    data['prompt_embeds'].append(prompt_embeds[used_idx_2])
+                    data['timesteps'].append(timesteps[used_idx_2])
+                    data['log_probs'].append(log_probs[used_idx_2])
+                    data['latents'].append(latents[used_idx_2])
+                    data['next_latents'].append(next_latents[used_idx_2])
+                    data['eval_scores'].append(s[used_idx])
+            
+            cur_sample_num *= config.split_time
     
     # Stack data if any samples were selected
     if len(data['prompt_embeds']) > 0:
