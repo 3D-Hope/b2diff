@@ -284,7 +284,10 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
             cur_sample_num *= config.split_time
     
     # Stack data if any samples were selected
-    if len(data['prompt_embeds']) > 0:
+    if config.sample.fk:
+        if logger:
+            logger.info(f"Selected {len(data['prompt_embeds'])} samples (FK sampling - all kept)")
+    elif len(data['prompt_embeds']) > 0:
         data = {k: torch.stack(v, dim=0) for k, v in data.items()}
         
         if logger:
