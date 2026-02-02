@@ -182,9 +182,14 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     logger.info(f"  Number of gradient updates per inner epoch = {samples_per_epoch // total_train_batch_size}")
     logger.info(f"  Number of inner epochs = {config.train.num_inner_epochs}")
     
-    assert config.sample.batch_size >= config.train.batch_size
-    assert config.sample.batch_size % config.train.batch_size == 0
-    
+    if not config.sample.fk:
+        assert config.sample.batch_size >= config.train.batch_size
+        
+        assert config.sample.batch_size % config.train.batch_size == 0
+    else:
+        assert (config.sample.batch_size * 4 * 2) >= config.train.batch_size
+        
+        assert (config.sample.batch_size * 4 * 2) % config.train.batch_size == 0
     # No checkpoint loading - model stays in memory across stages!
     # if config.resume_from:
     #     logger.info(f"Resuming from {config.resume_from}")
