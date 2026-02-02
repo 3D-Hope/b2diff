@@ -141,7 +141,7 @@ python3 ./scripts/training/train_pipeline.py \
     split_time=1 \
     sample.batch_size=6 \
     train.batch_size=24 \
-    sample.num_batches_per_epoch=4
+    sample.num_batches_per_epoch=1
     # pipeline.stage_cnt=150
     # pipeline.continue_from_stage=110 \
     # resume_id="tg2dp40a" \
