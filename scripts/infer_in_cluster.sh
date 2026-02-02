@@ -101,7 +101,7 @@ uv pip install -r requirements.txt || {
     echo "❌ Dependency installation failed"
     exit 1
 }
-
+uv pip install scipy
 # ------------------------------------------------------------------------------
 # STAGE 9: GPU check
 # ------------------------------------------------------------------------------
@@ -130,9 +130,12 @@ echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
 run_name="infer_in_cluster"
-python3 ./scripts/inference/inference_lora_clip_reward.py \
---checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/no_branching_no_selection_only_5_steps/stage13/checkpoints/checkpoint_1/ \
---output_dir tmp1 \
+# python3 ./scripts/inference/inference_lora_clip_reward.py \
+# --checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/no_branching_no_selection_only_5_steps/stage13/checkpoints/checkpoint_1/ \
+# --output_dir tmp1 \
+
+
+python3 ./scripts/inference/run_inception_score.py
 
 rm -rf tmp/  
 rm -rf tmp1/  

@@ -239,7 +239,7 @@ def sample_and_compute_is_baseline(
     return is_mean, is_std
 
 
-def main(image_dir):
+def get_inception_score(image_dir):
     # Configuration
     batch_size = 32
     splits = 10
@@ -287,9 +287,9 @@ def main(image_dir):
     
     print(f"\nResults saved to: {output_file}")
 
-if __name__ == "__main__":
-    img_dir = "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/only_5_steps/images"
-    main(img_dir)
+# if __name__ == "__main__":
+#     img_dir = "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/b2diffu_try2/images/"
+#     main(img_dir)
 #     parser = argparse.ArgumentParser(description="Compute Inception Score using CLIP")
 #     parser.add_argument(
 #         "--mode",
@@ -407,3 +407,7 @@ if __name__ == "__main__":
 #     else:
 #         # Compute IS on existing images
 #         main(args.image_dir)
+
+if __name__ == "__main__":
+    img_dir = "/home/pramish_paudel/codes/b2diff/tmp"
+    get_inception_score(img_dir)
