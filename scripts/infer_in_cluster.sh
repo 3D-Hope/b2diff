@@ -131,7 +131,8 @@ echo "GPUs detected: ${NUM_GPUS}"
 
 run_name="infer_in_cluster"
 python3 ./scripts/inference/inference_lora_clip_reward.py \
-    
+
+rm -rf tmp/  
 # Timing summary
 # ------------------------------------------------------------------------------
 END_TIME=$(date +%s)
