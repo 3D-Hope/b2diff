@@ -131,8 +131,11 @@ echo "GPUs detected: ${NUM_GPUS}"
 
 run_name="infer_in_cluster"
 python3 ./scripts/inference/inference_lora_clip_reward.py \
+--checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/no_branching_no_selection_only_5_steps/stage13/checkpoints/checkpoint_1/ \
+--output_dir tmp1 \
 
 rm -rf tmp/  
+rm -rf tmp1/  
 # Timing summary
 # ------------------------------------------------------------------------------
 END_TIME=$(date +%s)
