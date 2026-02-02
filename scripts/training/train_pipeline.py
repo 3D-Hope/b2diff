@@ -32,6 +32,7 @@ sys.path.insert(0, project_root)
 
 # Import core modules
 from core.sampling import run_sampling
+from core.fk_sampling import run_fk_sampling
 from core.selection import run_selection
 from core.training import run_training
 
@@ -336,13 +337,22 @@ class TrainingPipeline:
         try:
             # Step 1: Sampling
             logger.info(f"[{stage_idx}] Running sampling...")
-            save_dir = run_sampling(
-                stage_config, stage_idx, logger, 
-                wandb_run=self.wandb_run,
-                pipeline=self.pipeline,
-                trainable_layers=self.trainable_layers,
-                resume_from_ckpt=resume_from_ckpt
-            )
+            if self.config.sample.fk:
+                save_dir = run_fk_sampling(
+                    stage_config, stage_idx, logger, 
+                    wandb_run=self.wandb_run,
+                    pipeline=self.pipeline,
+                    trainable_layers=self.trainable_layers,
+                    resume_from_ckpt=resume_from_ckpt
+                )
+            else:
+                save_dir = run_sampling(
+                    stage_config, stage_idx, logger, 
+                    wandb_run=self.wandb_run,
+                    pipeline=self.pipeline,
+                    trainable_layers=self.trainable_layers,
+                    resume_from_ckpt=resume_from_ckpt
+                )
             logger.info(f"[{stage_idx}] Sampling completed")
             
             # Step 2: Selection

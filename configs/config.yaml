@@ -50,6 +50,7 @@ sample:
   no_branching: false
   no_selection: false
   normalize_all: false # if true uses the stat of the whole batch for norm instead of the per prompt reward norm
+  fk: true
 
 # Training configuration
 train:
