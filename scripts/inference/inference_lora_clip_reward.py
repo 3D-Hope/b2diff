@@ -400,15 +400,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--checkpoint_path",
         type=str,
-        default="/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/b2diffu_try2/final_ckpt/checkpoint_1",
+        default="/home/pramish_paudel/codes/b2diff/model/lora/norm_all_no_branching_no_selection_only_5_steps/stage16/checkpoints/checkpoint_1/",
         help="Path to LoRA checkpoint"
     )
     # b2diffu_try2
-    # new_100inc_b2diffu
+    # b2diffu_try2
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/b2diffu_try2/images",
+        default="/home/pramish_paudel/codes/b2diff/tmp",
         help="Output directory for images and results"
     )
     parser.add_argument(
@@ -426,7 +426,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=4,
+        default=48,
         help="Batch size for generation"
     )
     parser.add_argument(
@@ -460,3 +460,6 @@ if __name__ == "__main__":
         guidance_scale=args.guidance_scale,
         seed=args.seed,
     )
+
+    from run_inception_score import get_inception_score
+    get_inception_score(args.output_dir)
