@@ -336,24 +336,36 @@ class TrainingPipeline:
         
         try:
             # Step 1: Sampling
-            logger.info(f"[{stage_idx}] Running sampling...")
-            if self.config.sample.fk:
-                save_dir = run_fk_sampling(
-                    stage_config, stage_idx, logger, 
-                    wandb_run=self.wandb_run,
-                    pipeline=self.pipeline,
-                    trainable_layers=self.trainable_layers,
-                    resume_from_ckpt=resume_from_ckpt
-                )
+            # Check if sampling already completed (save_dir exists with sample.pkl)
+            expected_save_dir = os.path.join(
+                stage_config.save_path,
+                stage_config.exp_name,
+                f"stage{stage_idx}"
+            )
+            sample_pkl_path = os.path.join(expected_save_dir, 'sample.pkl')
+            
+            if os.path.exists(sample_pkl_path):
+                logger.info(f"[{stage_idx}] Sampling already completed (found {sample_pkl_path}), skipping...")
+                save_dir = expected_save_dir
             else:
-                save_dir = run_sampling(
-                    stage_config, stage_idx, logger, 
-                    wandb_run=self.wandb_run,
-                    pipeline=self.pipeline,
-                    trainable_layers=self.trainable_layers,
-                    resume_from_ckpt=resume_from_ckpt
-                )
-            logger.info(f"[{stage_idx}] Sampling completed")
+                logger.info(f"[{stage_idx}] Running sampling...")
+                if self.config.sample.fk:
+                    save_dir = run_fk_sampling(
+                        stage_config, stage_idx, logger, 
+                        wandb_run=self.wandb_run,
+                        pipeline=self.pipeline,
+                        trainable_layers=self.trainable_layers,
+                        resume_from_ckpt=resume_from_ckpt
+                    )
+                else:
+                    save_dir = run_sampling(
+                        stage_config, stage_idx, logger, 
+                        wandb_run=self.wandb_run,
+                        pipeline=self.pipeline,
+                        trainable_layers=self.trainable_layers,
+                        resume_from_ckpt=resume_from_ckpt
+                    )
+                logger.info(f"[{stage_idx}] Sampling completed")
             
             # Step 2: Selection
             logger.info(f"[{stage_idx}] Running selection...")
