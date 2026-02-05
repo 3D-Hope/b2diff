@@ -443,7 +443,9 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
             prompt_embeds = prompt_embeds1
             current_latents = store_latents[:, :-1]
             next_latents = store_latents[:, 1:]
-            timesteps = pipeline.scheduler.timesteps.repeat(config.sample.batch_size, 1)  # (batch_size, num_steps)
+            # Use actual batch size from the data (accounts for num_particles * 2 multiplication in FK mode)
+            actual_batch_size = store_latents.shape[0]
+            timesteps = pipeline.scheduler.timesteps.repeat(actual_batch_size, 1)  # (actual_batch_size, num_steps)
 
             samples.append(
                 {

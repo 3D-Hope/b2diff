@@ -136,7 +136,7 @@ python3 ./scripts/training/train_pipeline.py \
     train.incremental_training=true \
     sample.fk=true \
     seed=42 \
-    sample.no_branching=true \
+    sample.no_branching=false \
     sample.no_selection=true \
     split_time=1 \
     sample.batch_size=6 \

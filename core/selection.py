@@ -296,7 +296,7 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
         if logger:
             logger.warning("No samples met the selection criteria")
         print("Warning: No samples met the selection criteria")
-    
+    print(f"timesteps {data['timesteps'].shape}")
     # Save selected samples
     with open(os.path.join(save_dir, 'sample_stage.pkl'), 'wb') as f:
         pickle.dump(data, f)

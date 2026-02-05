@@ -197,8 +197,6 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     
     # Load sample data
     samples = load_sample_stage(save_dir)
-    # prompt_embeds: [batch_size, seq_len, dim]
-    # timesteps: [batch_size, 14]
     accelerator.save_state()
     
     pipeline.scheduler.set_timesteps(config.sample.num_steps, device=accelerator.device)
@@ -215,6 +213,8 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         
         total_batch_size = init_samples["eval_scores"].shape[0]
         perm = torch.randperm(total_batch_size)
+        for k, v in init_samples.items():
+            print(f"{k}: {v.shape}")
         samples = {k: v[perm] for k, v in init_samples.items()}
         
         # Filter trajectories to only include specified timesteps for progressive training
