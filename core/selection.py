@@ -122,7 +122,7 @@ def score_fn1(ground, img_dir, save_dir, config):
     with open(os.path.join(config.save_path, unique_id, 'history_scores.pkl'), 'wb') as f:
         pickle.dump(history_data, f)
     
-    print(data_mean)
+    print(f"{data_mean=}")
     
     # Normalize scores
     if config.sample.normalize_all:
@@ -194,7 +194,7 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     # Evaluate scores
     img_dir = os.path.join(save_dir, 'images')
     eval_scores, score_metrics, raw_clip_scores = score_fn1(ground, img_dir, save_dir, config)
-    print(f"{raw_clip_scores=}")
+    print(f"{raw_clip_scores=}, dtype of eval score tensor: {eval_scores.dtype}")
     print(f"{eval_scores=}")
     samples['eval_scores'] = eval_scores  # Normalized scores for training
     
@@ -210,7 +210,7 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
         }
     
     data = get_new_unit()
-    if config.sample.no_selection: # This is to allow all the samples regardless of the score to be in training data in no_branching mode
+    if config.sample.no_selection:
         t_left = 0
         t_right = config.sample.num_steps
         # Just save everything
@@ -225,12 +225,13 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     
     else:# Select positive and negative samples
         total_batch_size = samples['eval_scores'].shape[0]
-        if config.sample.fk:
-            data_size = total_batch_size // (config.sample.batch_size*4*2)
-        else:
-            data_size = total_batch_size // (config.sample.batch_size)
-        
-        batch_size = config.sample.batch_size if not config.sample.fk else config.sample.batch_size*4*2
+        # if config.sample.fk:
+        #     data_size = total_batch_size // (config.sample.batch_size*4*2)
+        # else:
+        #     data_size = total_batch_size // (config.sample.batch_size)
+        data_size = total_batch_size // (config.sample.batch_size)
+        # batch_size = config.sample.batch_size if not config.sample.fk else config.sample.batch_size*4*2
+        batch_size = config.sample.batch_size
         for b in range(batch_size):
             cur_sample_num = 1
             batch_samples = {
@@ -240,13 +241,13 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
             
             # When incremental training is enabled, keep the full trajectory
             # Otherwise, preserve original behavior (use last `split_step` timesteps)
-            if hasattr(config, 'train') and (getattr(config.train, 'incremental_training', False)):
+            if hasattr(config, 'train') and (getattr(config.train, 'incremental_training', False)) or config.sample.fk:
                 t_left = 0
                 t_right = config.sample.num_steps
             else:
                 t_left = config.sample.num_steps - config.split_step
                 t_right = config.sample.num_steps
-            
+            print(f"{data_size=}, {cur_sample_num=}, {total_batch_size=}")
             prompt_embeds = batch_samples['prompt_embeds'][torch.arange(0, data_size, cur_sample_num)]
             timesteps = batch_samples['timesteps'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
             log_probs = batch_samples['log_probs'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
@@ -254,7 +255,8 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
             next_latents = batch_samples['next_latents'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
             
             score = batch_samples['eval_scores'][torch.arange(0, data_size, cur_sample_num)]
-            score = score.reshape(-1, config.split_time)
+            print(f"Batch {b}: score shape before reshape: {score.shape}")
+            score = score.reshape(-1, config.split_time) if not config.sample.fk else score.reshape(-1, 4*2)
             max_idx = score.argmax(dim=1)
             min_idx = score.argmin(dim=1)
             
@@ -284,10 +286,10 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
             cur_sample_num *= config.split_time
     
     # Stack data if any samples were selected
-    if config.sample.fk:
-        if logger:
-            logger.info(f"Selected {len(data['prompt_embeds'])} samples (FK sampling - all kept)")
-    elif len(data['prompt_embeds']) > 0:
+    # if config.sample.fk:
+    #     if logger:
+    #         logger.info(f"Selected {len(data['prompt_embeds'])} samples (FK sampling - all kept)")
+    if len(data['prompt_embeds']) > 0:
         data = {k: torch.stack(v, dim=0) for k, v in data.items()}
         
         if logger:
@@ -322,6 +324,7 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     
     # Prepare clean metrics for aggregation at pipeline level
     # Return metrics WITHOUT per-stage prefixes - pipeline will handle aggregation
+    print(f"dtype of eval_scores: {data.get('eval_scores', torch.tensor([])).dtype}")
     num_selected = len(data.get('prompt_embeds', []))
     num_positive = int((data.get('eval_scores', torch.tensor([])) >= config.eval.pos_threshold).sum()) if len(data.get('eval_scores', [])) > 0 else 0
     num_negative = int((data.get('eval_scores', torch.tensor([])) < config.eval.neg_threshold).sum()) if len(data.get('eval_scores', [])) > 0 else 0
