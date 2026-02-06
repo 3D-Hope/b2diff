@@ -23,6 +23,7 @@ from diffusion.ddim_with_logprob import ddim_step_with_logprob, latents_decode
 from utils.utils import post_processing, seed_everything
 from diffusion.fkd_class import FKD, PotentialType
 from core.selection import score_fn1
+import open_clip
 
 tqdm = partial(tqdm_lib, dynamic_ncols=True)
 
@@ -225,6 +226,30 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
     prompt_idx = 0
     prompt_cnt = len(prompt_list)
     
+    # Load CLIP model once per stage for FK sampling
+    clip_model = None
+    clip_preprocess = None
+    clip_tokenizer = None
+    if config.sample.fk:
+        print("Loading CLIP model for FK sampling...")
+        clip_model, _, clip_preprocess = open_clip.create_model_and_transforms(
+            'ViT-H-14', 
+            pretrained='laion2B-s32B-b79K'
+        )
+        clip_tokenizer = open_clip.get_tokenizer('ViT-H-14')
+        clip_model = clip_model.to(accelerator.device)
+        print("CLIP model loaded successfully!")
+        
+        # Create a partial function with CLIP components bound
+        reward_fn_with_clip = partial(
+            score_fn1,
+            clip_model=clip_model,
+            clip_preprocess=clip_preprocess,
+            clip_tokenizer=clip_tokenizer
+        )
+    else:
+        reward_fn_with_clip = score_fn1
+    
     fkd = FKD(
         potential_type="diff",
         lmbda=10.0,
@@ -234,7 +259,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
         resampling_t_start=5,
         resampling_t_end=15,
         time_steps=20,
-        reward_fn=score_fn1,
+        reward_fn=reward_fn_with_clip,
         device=accelerator.device,
         latent_to_decode_fn=latents_decode,
         pipeline=pipeline,

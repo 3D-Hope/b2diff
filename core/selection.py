@@ -18,7 +18,7 @@ from utils.utils import seed_everything
 tqdm = partial(tqdm_lib, dynamic_ncols=True)
 
 
-def score_fn1(ground, img_dir, save_dir, config):
+def score_fn1(ground, img_dir, save_dir, config, clip_model=None, clip_preprocess=None, clip_tokenizer=None):
     """
     Calculate CLIP-based similarity scores for images against text prompts.
     
@@ -27,6 +27,9 @@ def score_fn1(ground, img_dir, save_dir, config):
         img_dir: Directory containing images
         save_dir: Directory to save results
         config: Configuration object
+        clip_model: Pre-loaded CLIP model (optional, will load if not provided)
+        clip_preprocess: Pre-loaded CLIP preprocess function (optional)
+        clip_tokenizer: Pre-loaded CLIP tokenizer (optional)
         
     Returns:
         sum_scores: Normalized scores for each image
@@ -35,12 +38,19 @@ def score_fn1(ground, img_dir, save_dir, config):
     unique_id = config.exp_name
     
     device = f"cuda" if torch.cuda.is_available() else "cpu"
-    model, _, preprocess = open_clip.create_model_and_transforms(
-        'ViT-H-14', 
-        pretrained='laion2B-s32B-b79K'
-    )
-    tokenizer = open_clip.get_tokenizer('ViT-H-14')
-    model = model.to(device)
+    
+    # Use provided CLIP components or load them (backward compatibility)
+    if clip_model is None or clip_preprocess is None or clip_tokenizer is None:
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            'ViT-H-14', 
+            pretrained='laion2B-s32B-b79K'
+        )
+        tokenizer = open_clip.get_tokenizer('ViT-H-14')
+        model = model.to(device)
+    else:
+        model = clip_model
+        preprocess = clip_preprocess
+        tokenizer = clip_tokenizer
     
     eval_list = sorted(os.listdir(img_dir))
     
