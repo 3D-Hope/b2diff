@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=fkb2_try2
+#SBATCH --job-name=best_only_fkb2_try_yes_selection
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
@@ -129,12 +129,13 @@ fi
 echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="fkb2_try_yes_selection"
+run_name="best_only_fkb2_try_yes_selection"
 # sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
     train.incremental_training=true \
     sample.fk=true \
+    sample.only_best_fk=true \
     seed=42 \
     sample.no_branching=false \
     sample.no_selection=false \

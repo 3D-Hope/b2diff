@@ -266,7 +266,12 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
             
             score = batch_samples['eval_scores'][torch.arange(0, data_size, cur_sample_num)]
             print(f"Batch {b}: score shape before reshape: {score.shape}")
-            score = score.reshape(-1, config.split_time) if not config.sample.fk else score.reshape(-1, 4*2)
+            # Handle FK mode: use 4*1 if only_best_fk=True, otherwise 4*2
+            if config.sample.fk:
+                fk_particles = 4 * 1 if getattr(config.sample, 'only_best_fk', False) else 4 * 2
+                score = score.reshape(-1, fk_particles)
+            else:
+                score = score.reshape(-1, config.split_time)
             max_idx = score.argmax(dim=1)
             min_idx = score.argmin(dim=1)
             

@@ -193,8 +193,11 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
     total_prompts = []
     total_samples = None
     
+    # Determine particle multiplier based on only_best_fk setting
+    particle_multiplier = 1 if (config.sample.fk and getattr(config.sample, 'only_best_fk', False)) else 2
+    
     if config.sample.fk:
-        sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.batch_size * num_particles * 2, 1, 1)
+        sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.batch_size * num_particles * particle_multiplier, 1, 1)
     else:
         sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.batch_size, 1, 1)
         
@@ -282,7 +285,8 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
             prompts1 = [prompt_list[(prompt_idx+i)%prompt_cnt] for i in range(config.sample.batch_size)]
             prompt_idx += config.sample.batch_size
         
-        prompts1 = [prompt for prompt in prompts1 for _ in range(num_particles * 2)] # copy(sequential) each prompt for num_particles * 2, num_particles for best and num_particles for the worst
+        # Copy each prompt for particles (only best if only_best_fk=True, otherwise best+worst)
+        prompts1 = [prompt for prompt in prompts1 for _ in range(num_particles * particle_multiplier)]
         # Encode prompts
         prompt_ids1 = pipeline.tokenizer(
             prompts1,
@@ -308,7 +312,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
         # Prepare latents
         if config.sample.fk:
             noise_latents1 = pipeline.prepare_latents(
-            config.sample.batch_size * num_particles * 2, 
+            config.sample.batch_size * num_particles * particle_multiplier, 
             pipeline.unet.config.in_channels, ## channels
             pipeline.unet.config.sample_size * pipeline.vae_scale_factor, ## height
             pipeline.unet.config.sample_size * pipeline.vae_scale_factor, ## width
@@ -403,53 +407,81 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                             all_resampled_latents = []
                             all_selected_log_probs = []
                             
-                            for b in range(len(prompts1) // (num_particles * 2)):
+                            only_best = getattr(config.sample, 'only_best_fk', False)
+                            particles_per_prompt = num_particles * particle_multiplier
+                            
+                            for b in range(len(prompts1) // particles_per_prompt):
                                 # Extract latents and log_probs for this specific prompt's particles
-                                start_idx = b * (num_particles * 2)
-                                mid_idx = start_idx + num_particles
-                                end_idx = start_idx + (num_particles * 2)
+                                start_idx = b * particles_per_prompt
+                                end_idx = start_idx + particles_per_prompt
                                 
-                                # Process best particles (first half)
-                                best_latents = latents_t_1[start_idx:mid_idx]
-                                best_log_probs = log_prob[start_idx:mid_idx]
-                                best_prompts = prompts1[start_idx:mid_idx]
-                                
-                                latents_0_best = latents_0[start_idx:mid_idx]
-                                resampled_best, _, selected_best_indices = fkd.resample(
-                                    sampling_idx=i, 
-                                    latents=best_latents, 
-                                    x0_preds=latents_0_best,
-                                    ground=best_prompts,
-                                    img_dir=os.path.join(save_dir, 'tmp_images'),
-                                    save_dir=save_dir,
-                                    config=config,
-                                    get_best_indices=True
-                                )
-                                selected_best_log_probs = best_log_probs[selected_best_indices]
-                                
-                                # Process worst particles (second half)
-                                worst_latents = latents_t_1[mid_idx:end_idx]
-                                worst_log_probs = log_prob[mid_idx:end_idx]
-                                worst_prompts = prompts1[mid_idx:end_idx]
-                                latents_0_worst = latents_0[mid_idx:end_idx]
-                                resampled_worst, _, selected_worst_indices = fkd.resample(
-                                    sampling_idx=i, 
-                                    latents=worst_latents, 
-                                    x0_preds=latents_0_worst,
-                                    ground=worst_prompts,
-                                    img_dir=os.path.join(save_dir, 'tmp_images'),
-                                    save_dir=save_dir,
-                                    config=config,
-                                    get_best_indices=False
-                                )
-                                selected_worst_log_probs = worst_log_probs[selected_worst_indices]
-                                
-                                # Combine best and worst results for this prompt
-                                combined_latents = torch.cat([resampled_best, resampled_worst], dim=0)
-                                combined_log_probs = torch.cat([selected_best_log_probs, selected_worst_log_probs], dim=0)
-                                
-                                all_resampled_latents.append(combined_latents)
-                                all_selected_log_probs.append(combined_log_probs)
+                                if only_best:
+                                    # Only process best particles
+                                    best_latents = latents_t_1[start_idx:end_idx]
+                                    best_log_probs = log_prob[start_idx:end_idx]
+                                    best_prompts = prompts1[start_idx:end_idx]
+                                    latents_0_best = latents_0[start_idx:end_idx]
+                                    
+                                    resampled_best, _, selected_best_indices = fkd.resample(
+                                        sampling_idx=i, 
+                                        latents=best_latents, 
+                                        x0_preds=latents_0_best,
+                                        ground=best_prompts,
+                                        img_dir=os.path.join(save_dir, 'tmp_images'),
+                                        save_dir=save_dir,
+                                        config=config,
+                                        get_best_indices=True
+                                    )
+                                    selected_best_log_probs = best_log_probs[selected_best_indices]
+                                    
+                                    all_resampled_latents.append(resampled_best)
+                                    all_selected_log_probs.append(selected_best_log_probs)
+                                else:
+                                    # Process both best and worst particles
+                                    mid_idx = start_idx + num_particles
+                                    
+                                    # Process best particles (first half)
+                                    best_latents = latents_t_1[start_idx:mid_idx]
+                                    best_log_probs = log_prob[start_idx:mid_idx]
+                                    best_prompts = prompts1[start_idx:mid_idx]
+                                    latents_0_best = latents_0[start_idx:mid_idx]
+                                    
+                                    resampled_best, _, selected_best_indices = fkd.resample(
+                                        sampling_idx=i, 
+                                        latents=best_latents, 
+                                        x0_preds=latents_0_best,
+                                        ground=best_prompts,
+                                        img_dir=os.path.join(save_dir, 'tmp_images'),
+                                        save_dir=save_dir,
+                                        config=config,
+                                        get_best_indices=True
+                                    )
+                                    selected_best_log_probs = best_log_probs[selected_best_indices]
+                                    
+                                    # Process worst particles (second half)
+                                    worst_latents = latents_t_1[mid_idx:end_idx]
+                                    worst_log_probs = log_prob[mid_idx:end_idx]
+                                    worst_prompts = prompts1[mid_idx:end_idx]
+                                    latents_0_worst = latents_0[mid_idx:end_idx]
+                                    
+                                    resampled_worst, _, selected_worst_indices = fkd.resample(
+                                        sampling_idx=i, 
+                                        latents=worst_latents, 
+                                        x0_preds=latents_0_worst,
+                                        ground=worst_prompts,
+                                        img_dir=os.path.join(save_dir, 'tmp_images'),
+                                        save_dir=save_dir,
+                                        config=config,
+                                        get_best_indices=False
+                                    )
+                                    selected_worst_log_probs = worst_log_probs[selected_worst_indices]
+                                    
+                                    # Combine best and worst results for this prompt
+                                    combined_latents = torch.cat([resampled_best, resampled_worst], dim=0)
+                                    combined_log_probs = torch.cat([selected_best_log_probs, selected_worst_log_probs], dim=0)
+                                    
+                                    all_resampled_latents.append(combined_latents)
+                                    all_selected_log_probs.append(combined_log_probs)
                             
                             # Concatenate all results back together
                             latents_t_1 = torch.cat(all_resampled_latents, dim=0)
