@@ -129,7 +129,7 @@ fi
 echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="fkb2_try2"
+run_name="fkb2_try_yes_selection"
 # sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
@@ -137,7 +137,7 @@ python3 ./scripts/training/train_pipeline.py \
     sample.fk=true \
     seed=42 \
     sample.no_branching=false \
-    sample.no_selection=true \
+    sample.no_selection=false \
     split_time=1 \
     sample.batch_size=6 \
     train.batch_size=24 \

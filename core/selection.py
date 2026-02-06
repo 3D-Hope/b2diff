@@ -210,7 +210,7 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
         }
     
     data = get_new_unit()
-    if config.sample.fk:
+    if config.sample.no_selection: # This is to allow all the samples regardless of the score to be in training data in no_branching mode
         t_left = 0
         t_right = config.sample.num_steps
         # Just save everything
@@ -296,7 +296,6 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
         if logger:
             logger.warning("No samples met the selection criteria")
         print("Warning: No samples met the selection criteria")
-    print(f"timesteps {data['timesteps'].shape}")
     # Save selected samples
     with open(os.path.join(save_dir, 'sample_stage.pkl'), 'wb') as f:
         pickle.dump(data, f)
