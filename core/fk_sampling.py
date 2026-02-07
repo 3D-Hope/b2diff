@@ -454,6 +454,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                         img_dir=os.path.join(save_dir, 'tmp_images'),
                                         save_dir=save_dir,
                                         config=config,
+                                        log_probs=best_log_probs,
                                         get_best_indices=True
                                     )
                                     
@@ -471,6 +472,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                         img_dir=os.path.join(save_dir, 'tmp_images'),
                                         save_dir=save_dir,
                                         config=config,
+                                        log_probs=worst_log_probs,
                                         get_best_indices=False
                                     )
                                     
