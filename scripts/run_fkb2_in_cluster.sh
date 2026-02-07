@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=fkb2_try_yes_selection_corrected
+#SBATCH --job-name=20steps_best_only_fkb2_try_yes_selection_corrected
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
@@ -129,7 +129,7 @@ fi
 echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="fkb2_try_yes_selection_corrected"
+run_name="20steps_best_only_fkb2_try_yes_selection_corrected"
 # sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward if boest_only_fk is false else only 4 particles for best reward only no worst
 # batch size for sampling 12 for only best and 6 for both best and worst
 python3 ./scripts/training/train_pipeline.py \
