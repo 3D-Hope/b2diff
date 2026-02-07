@@ -87,7 +87,8 @@ class FKD:
 
     def resample(
         self, *, sampling_idx: int, latents: torch.Tensor, x0_preds: torch.Tensor,
-        ground, img_dir, save_dir, config, get_best_indices=True
+        ground, img_dir, save_dir, config, 
+        log_probs, get_best_indices=True
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Perform resampling of particles if conditions are met.
@@ -108,7 +109,7 @@ class FKD:
         resampling_interval = np.append(resampling_interval, self.time_steps - 1)
 
         if sampling_idx not in resampling_interval:
-            return latents, None, list(range(self.num_particles))
+            return latents, None, log_probs
 
         # Decode latents to population images and compute rewards
         population_images = self.latent_to_decode_fn(self.pipeline, x0_preds, self.device, self.data_type)
@@ -208,8 +209,8 @@ class FKD:
             self.product_of_potentials = (
                 self.product_of_potentials[indices] * w[indices]
             )
-
-        return resampled_latents, resampled_images, indices
+        log_probs = log_probs[indices]
+        return resampled_latents, resampled_images, log_probs
 
 
 if __name__ == "__main__":

@@ -251,13 +251,13 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
             
             # When incremental training is enabled, keep the full trajectory
             # Otherwise, preserve original behavior (use last `split_step` timesteps)
-            if hasattr(config, 'train') and (getattr(config.train, 'incremental_training', False)) or config.sample.fk:
+            if (hasattr(config, 'train') and (getattr(config.train, 'incremental_training', False))) or config.sample.fk:
                 t_left = 0
                 t_right = config.sample.num_steps
             else:
                 t_left = config.sample.num_steps - config.split_step
                 t_right = config.sample.num_steps
-            print(f"{data_size=}, {cur_sample_num=}, {total_batch_size=}")
+            # print(f"{data_size=}, {cur_sample_num=}, {total_batch_size=}")
             prompt_embeds = batch_samples['prompt_embeds'][torch.arange(0, data_size, cur_sample_num)]
             timesteps = batch_samples['timesteps'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
             log_probs = batch_samples['log_probs'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
@@ -298,7 +298,7 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
                     data['next_latents'].append(next_latents[used_idx_2])
                     data['eval_scores'].append(s[used_idx])
             
-            cur_sample_num *= config.split_time
+            cur_sample_num *= config.split_time if not config.sample.fk else fk_particles
     
     # Stack data if any samples were selected
     # if config.sample.fk:

@@ -422,7 +422,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                     best_prompts = prompts1[start_idx:end_idx]
                                     latents_0_best = latents_0[start_idx:end_idx]
                                     
-                                    resampled_best, _, selected_best_indices = fkd.resample(
+                                    resampled_best, _, selected_best_log_probs = fkd.resample(
                                         sampling_idx=i, 
                                         latents=best_latents, 
                                         x0_preds=latents_0_best,
@@ -430,9 +430,9 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                         img_dir=os.path.join(save_dir, 'tmp_images'),
                                         save_dir=save_dir,
                                         config=config,
+                                        log_probs=best_log_probs,
                                         get_best_indices=True
                                     )
-                                    selected_best_log_probs = best_log_probs[selected_best_indices]
                                     
                                     all_resampled_latents.append(resampled_best)
                                     all_selected_log_probs.append(selected_best_log_probs)
@@ -446,7 +446,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                     best_prompts = prompts1[start_idx:mid_idx]
                                     latents_0_best = latents_0[start_idx:mid_idx]
                                     
-                                    resampled_best, _, selected_best_indices = fkd.resample(
+                                    resampled_best, _, selected_best_log_probs = fkd.resample(
                                         sampling_idx=i, 
                                         latents=best_latents, 
                                         x0_preds=latents_0_best,
@@ -456,7 +456,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                         config=config,
                                         get_best_indices=True
                                     )
-                                    selected_best_log_probs = best_log_probs[selected_best_indices]
                                     
                                     # Process worst particles (second half)
                                     worst_latents = latents_t_1[mid_idx:end_idx]
@@ -464,7 +463,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                     worst_prompts = prompts1[mid_idx:end_idx]
                                     latents_0_worst = latents_0[mid_idx:end_idx]
                                     
-                                    resampled_worst, _, selected_worst_indices = fkd.resample(
+                                    resampled_worst, _, selected_worst_log_probs = fkd.resample(
                                         sampling_idx=i, 
                                         latents=worst_latents, 
                                         x0_preds=latents_0_worst,
@@ -474,7 +473,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                         config=config,
                                         get_best_indices=False
                                     )
-                                    selected_worst_log_probs = worst_log_probs[selected_worst_indices]
                                     
                                     # Combine best and worst results for this prompt
                                     combined_latents = torch.cat([resampled_best, resampled_worst], dim=0)
