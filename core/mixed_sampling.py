@@ -217,6 +217,7 @@ def run_mixed_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipe
         pipeline=pipeline,
         data_type=neg_prompt_embed.dtype
     )
+    extra_step_kwargs = pipeline.prepare_extra_step_kwargs(None, config.sample.eta)
     
     # Main sampling loop
     for idx in tqdm(
@@ -244,6 +245,11 @@ def run_mixed_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipe
         all_latents = []
         all_log_probs = []
         all_prompt_embeds = []
+        
+        # Initialize to avoid undefined variable errors
+        latents_fk = []
+        latents_vanilla = []
+        fk_prompts_expanded = []
         
         # ========== FK SAMPLING PART ==========
         if fk_batch_size > 0:
@@ -291,17 +297,16 @@ def run_mixed_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipe
                 with autocast():
                     with torch.no_grad():
                         for k in range(len(latents_fk)):
-                            latent = latents_fk[k][-1]
-                            if config.sample.cfg:
-                                latent_model_input = torch.cat([latent] * 2)
-                                timestep = torch.cat([t.unsqueeze(0)] * (latent.shape[0] * 2))
-                            else:
-                                latent_model_input = latent
-                                timestep = torch.cat([t.unsqueeze(0)] * latent.shape[0])
+                            latents_t = latents_fk[k][i]
+                            latents_input = torch.cat([latents_t] * 2) if config.sample.cfg else latents_t
+                            latents_input = pipeline.scheduler.scale_model_input(latents_input, t)
                             
                             noise_pred = pipeline.unet(
-                                latent_model_input, timestep, prompt_embeds_fk_combine
-                            ).sample
+                                latents_input,
+                                t,
+                                encoder_hidden_states=prompt_embeds_fk_combine,
+                                return_dict=False,
+                            )[0]
                             
                             if config.sample.cfg:
                                 noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
@@ -309,13 +314,12 @@ def run_mixed_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipe
                                     noise_pred_text - noise_pred_uncond
                                 )
                             
-                            latents_t_1, log_prob, _ = ddim_step_with_logprob(
+                            latents_t_1, log_prob, latents_0 = ddim_step_with_logprob(
                                 pipeline.scheduler,
                                 noise_pred,
                                 t,
-                                latent,
-                                eta=config.sample.eta,
-                                prev_sample=None,
+                                latents_t,
+                                **extra_step_kwargs
                             )
                             
                             # FK resampling
@@ -323,24 +327,77 @@ def run_mixed_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipe
                                 all_resampled_latents = []
                                 all_selected_log_probs = []
                                 
-                                for batch_idx in range(fk_batch_size):
-                                    start_idx = batch_idx * num_particles * particle_multiplier
-                                    end_idx = start_idx + num_particles * particle_multiplier
+                                only_best = getattr(config.sample, 'only_best_fk', False)
+                                particles_per_prompt = num_particles * particle_multiplier
+                                
+                                for b in range(fk_batch_size):
+                                    start_idx = b * particles_per_prompt
+                                    end_idx = start_idx + particles_per_prompt
                                     
-                                    batch_latents = latents_t_1[start_idx:end_idx]
-                                    batch_log_probs = log_prob[start_idx:end_idx]
-                                    batch_prompt = fk_prompts_expanded[start_idx]
-                                    
-                                    resampled_best, _, selected_best_log_probs = fkd.resample(
-                                        batch_latents,
-                                        batch_log_probs,
-                                        batch_prompt,
-                                        i,
-                                        save_dir
-                                    )
-                                    
-                                    all_resampled_latents.append(resampled_best)
-                                    all_selected_log_probs.append(selected_best_log_probs)
+                                    if only_best:
+                                        best_latents = latents_t_1[start_idx:end_idx]
+                                        best_log_probs = log_prob[start_idx:end_idx]
+                                        best_prompts = fk_prompts_expanded[start_idx:end_idx]
+                                        latents_0_best = latents_0[start_idx:end_idx]
+                                        
+                                        resampled_best, _, selected_best_log_probs = fkd.resample(
+                                            sampling_idx=i, 
+                                            latents=best_latents, 
+                                            x0_preds=latents_0_best,
+                                            ground=best_prompts,
+                                            img_dir=os.path.join(save_dir, 'tmp_images'),
+                                            save_dir=save_dir,
+                                            config=config,
+                                            log_probs=best_log_probs,
+                                            get_best_indices=True
+                                        )
+                                        
+                                        all_resampled_latents.append(resampled_best)
+                                        all_selected_log_probs.append(selected_best_log_probs)
+                                    else:
+                                        mid_idx = start_idx + num_particles
+                                        
+                                        # Process best particles
+                                        best_latents = latents_t_1[start_idx:mid_idx]
+                                        best_log_probs = log_prob[start_idx:mid_idx]
+                                        best_prompts = fk_prompts_expanded[start_idx:mid_idx]
+                                        latents_0_best = latents_0[start_idx:mid_idx]
+                                        
+                                        resampled_best, _, selected_best_log_probs = fkd.resample(
+                                            sampling_idx=i, 
+                                            latents=best_latents, 
+                                            x0_preds=latents_0_best,
+                                            ground=best_prompts,
+                                            img_dir=os.path.join(save_dir, 'tmp_images'),
+                                            save_dir=save_dir,
+                                            config=config,
+                                            log_probs=best_log_probs,
+                                            get_best_indices=True
+                                        )
+                                        
+                                        # Process worst particles
+                                        worst_latents = latents_t_1[mid_idx:end_idx]
+                                        worst_log_probs = log_prob[mid_idx:end_idx]
+                                        worst_prompts = fk_prompts_expanded[mid_idx:end_idx]
+                                        latents_0_worst = latents_0[mid_idx:end_idx]
+                                        
+                                        resampled_worst, _, selected_worst_log_probs = fkd.resample(
+                                            sampling_idx=i, 
+                                            latents=worst_latents, 
+                                            x0_preds=latents_0_worst,
+                                            ground=worst_prompts,
+                                            img_dir=os.path.join(save_dir, 'tmp_images'),
+                                            save_dir=save_dir,
+                                            config=config,
+                                            log_probs=worst_log_probs,
+                                            get_best_indices=False
+                                        )
+                                        
+                                        combined_latents = torch.cat([resampled_best, resampled_worst], dim=0)
+                                        combined_log_probs = torch.cat([selected_best_log_probs, selected_worst_log_probs], dim=0)
+                                        
+                                        all_resampled_latents.append(combined_latents)
+                                        all_selected_log_probs.append(combined_log_probs)
                                 
                                 latents_t_1 = torch.cat(all_resampled_latents, dim=0)
                                 log_prob = torch.cat(all_selected_log_probs, dim=0)
@@ -424,17 +481,16 @@ def run_mixed_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipe
                             log_probs_vanilla = new_log_probs
                         
                         for k in range(len(latents_vanilla)):
-                            latent = latents_vanilla[k][-1]
-                            if config.sample.cfg:
-                                latent_model_input = torch.cat([latent] * 2)
-                                timestep = torch.cat([t.unsqueeze(0)] * (latent.shape[0] * 2))
-                            else:
-                                latent_model_input = latent
-                                timestep = torch.cat([t.unsqueeze(0)] * latent.shape[0])
+                            latents_t = latents_vanilla[k][i]
+                            latents_input = torch.cat([latents_t] * 2) if config.sample.cfg else latents_t
+                            latents_input = pipeline.scheduler.scale_model_input(latents_input, t)
                             
                             noise_pred = pipeline.unet(
-                                latent_model_input, timestep, prompt_embeds_vanilla_combine
-                            ).sample
+                                latents_input,
+                                t,
+                                encoder_hidden_states=prompt_embeds_vanilla_combine,
+                                return_dict=False,
+                            )[0]
                             
                             if config.sample.cfg:
                                 noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
@@ -446,9 +502,8 @@ def run_mixed_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipe
                                 pipeline.scheduler,
                                 noise_pred,
                                 t,
-                                latent,
-                                eta=config.sample.eta,
-                                prev_sample=None,
+                                latents_t,
+                                **extra_step_kwargs,
                             )
                             
                             latents_vanilla[k].append(latents_t_1)
@@ -460,16 +515,13 @@ def run_mixed_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipe
         
         # ========== COMBINE AND SAVE ==========
         sample_num = len(all_latents)
-        prompts_repeated = (fk_prompts * len(latents_fk) if fk_batch_size > 0 else []) + \
+        prompts_repeated = (fk_prompts_expanded * len(latents_fk) if fk_batch_size > 0 else []) + \
                           (vanilla_prompts * len(latents_vanilla) if vanilla_batch_size > 0 else [])
         total_prompts.extend(prompts_repeated)
         
         for k in range(sample_num):
-            # Determine which prompt_embeds to use
-            if k < len(latents_fk) if fk_batch_size > 0 else 0:
-                prompt_embeds_k = prompt_embeds_fk
-            else:
-                prompt_embeds_k = prompt_embeds_vanilla
+            # Use pre-built prompt_embeds from all_prompt_embeds
+            prompt_embeds_k = all_prompt_embeds[k]
             
             images = latents_decode(pipeline, all_latents[k][config.sample.num_steps], accelerator.device, prompt_embeds_k.dtype)
             store_latents = torch.stack(all_latents[k], dim=1)
