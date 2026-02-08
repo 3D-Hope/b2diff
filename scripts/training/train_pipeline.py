@@ -33,6 +33,7 @@ sys.path.insert(0, project_root)
 # Import core modules
 from core.sampling import run_sampling
 from core.fk_sampling import run_fk_sampling
+from core.mixed_sampling import run_mixed_sampling
 from core.selection import run_selection
 from core.training import run_training
 
@@ -309,7 +310,7 @@ class TrainingPipeline:
             # else:
             #     target_count = total_timesteps
             # TODO: this is hack to do 5 step only training
-            target_count = 5
+            target_count = 20
             
             if target_count < total_timesteps:
                 # Add uniformly spaced new indices until reaching target_count
@@ -349,7 +350,20 @@ class TrainingPipeline:
                 save_dir = expected_save_dir
             else:
                 logger.info(f"[{stage_idx}] Running sampling...")
-                if self.config.sample.fk:
+                # Determine sampling mode: mixed (FK + vanilla), FK only, or vanilla only
+                if self.config.sample.fk and 0 < self.config.sample.fk_mix_ratio < 1.0:
+                    # Mixed sampling: combine FK and vanilla
+                    logger.info(f"[{stage_idx}] Using MIXED sampling (FK: {self.config.sample.fk_mix_ratio*100:.0f}%, Vanilla: {(1-self.config.sample.fk_mix_ratio)*100:.0f}%)")
+                    save_dir = run_mixed_sampling(
+                        stage_config, stage_idx, logger, 
+                        wandb_run=self.wandb_run,
+                        pipeline=self.pipeline,
+                        trainable_layers=self.trainable_layers,
+                        resume_from_ckpt=resume_from_ckpt
+                    )
+                elif self.config.sample.fk:
+                    # Pure FK sampling
+                    logger.info(f"[{stage_idx}] Using FK sampling only")
                     save_dir = run_fk_sampling(
                         stage_config, stage_idx, logger, 
                         wandb_run=self.wandb_run,
@@ -358,6 +372,8 @@ class TrainingPipeline:
                         resume_from_ckpt=resume_from_ckpt
                     )
                 else:
+                    # Pure vanilla sampling
+                    logger.info(f"[{stage_idx}] Using vanilla sampling only")
                     save_dir = run_sampling(
                         stage_config, stage_idx, logger, 
                         wandb_run=self.wandb_run,

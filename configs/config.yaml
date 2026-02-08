@@ -52,6 +52,7 @@ sample:
   normalize_all: false # if true uses the stat of the whole batch for norm instead of the per prompt reward norm
   fk: false
   only_best_fk: false
+  fk_mix_ratio: 0.5  # For mixed sampling: 0.0=all vanilla, 1.0=all FK, 0.5=50/50 mix
 
 # Training configuration
 train:
