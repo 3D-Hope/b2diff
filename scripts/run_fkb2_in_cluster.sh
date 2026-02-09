@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=fk_b2_all_step_score_fn_rl
+#SBATCH --job-name=fk_particle1
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
@@ -129,14 +129,37 @@ fi
 echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="fk_b2_all_step_score_fn_rl"
+# run_name="fk_b2_all_step_score_fn_rl"
+# # sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward if boest_only_fk is false else only 4 particles for best reward only no worst
+# # batch size for sampling 12 for only best and 6 for both best and worst
+# python3 ./scripts/training/train_pipeline.py \
+#     exp_name="${run_name}" \
+#     train.incremental_training=true \
+#     train.score_fn_training=true \
+#     sample.fk=true \
+#     sample.only_best_fk=true \
+#     sample.fk_mix_ratio=1 \
+#     seed=42 \
+#     sample.no_branching=false \
+#     sample.no_selection=false \
+#     split_time=4 \
+#     sample.batch_size=12 \
+#     train.batch_size=16 \
+#     sample.num_batches_per_epoch=1
+#     pipeline.stage_cnt=1500
+    # pipeline.continue_from_stage=110 \
+    # resume_id="tg2dp40a" \
+
+run_name="fk_particle1"
 # sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward if boest_only_fk is false else only 4 particles for best reward only no worst
 # batch size for sampling 12 for only best and 6 for both best and worst
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
     train.incremental_training=true \
-    train.score_fn_training=true \
+    train.score_fn_training=false \
     sample.fk=true \
+    sample.normalize_all=true \
+    sample.num_particles=1 \
     sample.only_best_fk=true \
     sample.fk_mix_ratio=1 \
     seed=42 \
@@ -145,10 +168,9 @@ python3 ./scripts/training/train_pipeline.py \
     split_time=4 \
     sample.batch_size=12 \
     train.batch_size=16 \
-    sample.num_batches_per_epoch=1
-    pipeline.stage_cnt=1500
-    # pipeline.continue_from_stage=110 \
-    # resume_id="tg2dp40a" \
+    sample.num_batches_per_epoch=16
+    # pipeline.stage_cnt=1500
+
 # ------------------------------------------------------------------------------
 # Timing summary
 # ------------------------------------------------------------------------------

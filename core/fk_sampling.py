@@ -185,7 +185,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
     # SAMPLING LOOP
     pipeline.unet.eval()
     
-    num_particles = 4 # 4
+    num_particles = config.sample.num_particles # 4
     samples = []
     split_steps = [config.split_step]
     split_times = [config.split_time]

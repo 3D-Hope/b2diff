@@ -291,7 +291,7 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
             print(f"Batch {b}: score shape before reshape: {score.shape}")
             # Handle FK mode: use 4*1 if only_best_fk=True, otherwise 4*2
             if config.sample.fk:
-                fk_particles = 4 * 1 if getattr(config.sample, 'only_best_fk', False) else 4 * 2
+                fk_particles = config.sample.num_particles * 1 if getattr(config.sample, 'only_best_fk', False) else config.sample.num_particles * 2
                 score = score.reshape(-1, fk_particles)
             else:
                 score = score.reshape(-1, config.split_time)
@@ -302,14 +302,23 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
                 for p_n in range(2):
                     if p_n == 0 and s[max_idx[j]] >= config.eval.pos_threshold:
                         used_idx = max_idx[j]
-                        used_idx_2 = j * config.split_time + max_idx[j]
+                        if config.sample.fk:
+                            used_idx_2 = j * fk_particles + max_idx[j]
+                        else:
+                            used_idx_2 = j * config.split_time + max_idx[j]
                     elif p_n == 1 and s[min_idx[j]] < config.eval.neg_threshold:
                         used_idx = min_idx[j]
-                        used_idx_2 = j * config.split_time + min_idx[j]
+                        if config.sample.fk:
+                            used_idx_2 = j * fk_particles + min_idx[j]
+                        else:
+                            used_idx_2 = j * config.split_time + min_idx[j]
                     else:
                         if config.sample.no_selection: # this is to allow all the samples regardless of the score to be in training data in no_branching mode
                             used_idx = min_idx[j]
-                            used_idx_2 = j * config.split_time + min_idx[j]
+                            if config.sample.fk:
+                                used_idx_2 = j * fk_particles + min_idx[j]
+                            else:
+                                used_idx_2 = j * config.split_time + min_idx[j]
                         else:
                             continue
                         # continue
