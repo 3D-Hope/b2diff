@@ -36,6 +36,7 @@ from core.fk_sampling import run_fk_sampling
 from core.mixed_sampling import run_mixed_sampling
 from core.selection import run_selection
 from core.training import run_training
+from core.score_fn_training import run_score_fn_training
 
 # Setup logging
 logging.basicConfig(
@@ -393,13 +394,22 @@ class TrainingPipeline:
             
             # Step 3: Training
             logger.info(f"[{stage_idx}] Running training...")
-            save_dir = run_training(
-                stage_config, stage_idx, logger, 
-                wandb_run=self.wandb_run,
-                pipeline=self.pipeline,
-                trainable_layers=self.trainable_layers,
-                training_timesteps=training_timestep_indices,
-            )
+            if self.config.train.score_fn_training:
+                save_dir = run_score_fn_training(
+                    stage_config, stage_idx, logger, 
+                    wandb_run=self.wandb_run,
+                    pipeline=self.pipeline,
+                    trainable_layers=self.trainable_layers,
+                    training_timesteps=training_timestep_indices,
+                )
+            else:
+                save_dir = run_training(
+                    stage_config, stage_idx, logger, 
+                    wandb_run=self.wandb_run,
+                    pipeline=self.pipeline,
+                    trainable_layers=self.trainable_layers,
+                    training_timesteps=training_timestep_indices,
+                )
             logger.info(f"[{stage_idx}] Training completed")
             
             # Step 4: Cleanup temporary files to save disk space
