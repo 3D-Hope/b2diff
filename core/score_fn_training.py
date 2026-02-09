@@ -205,7 +205,7 @@ def run_score_fn_training(config, stage_idx=None, external_logger=None, wandb_ru
     # Equation: ∇θJDDRL = E[∑(t=0 to T) ∇θ log pθ(xt−1 | xt, c) r(x0, c)]
     
     # Get rewards (evaluation scores)
-    evaluation_score = samples["eval_score"].to(accelerator.device)
+    evaluation_score = samples["eval_scores"].to(accelerator.device)
     
     # Apply reward weighting (beta1 for positive, beta2 for negative)
     temp_beta1 = torch.ones_like(evaluation_score) * config.train.beta1

@@ -135,7 +135,7 @@ run_name="fk_b2_all_step_score_fn_rl"
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
     train.incremental_training=true \
-    train.scrore_fn_training=true \
+    train.score_fn_training=true \
     sample.fk=true \
     sample.only_best_fk=true \
     sample.fk_mix_ratio=1 \
