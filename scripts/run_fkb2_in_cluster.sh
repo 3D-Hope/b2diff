@@ -96,7 +96,7 @@ echo "STAGE 5: Installing Python dependencies"
 
 cd /home/pramish_paudel/codes/b2diff
 
-conda install -y setuptools pip
+pip install --upgrade setuptools pip
 
 pip install uv
 uv pip install -r requirements.txt || {
