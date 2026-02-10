@@ -37,21 +37,19 @@ export WANDB_ENTITY="pramish-paudel-insait"
 echo "STAGE 3: Setting up Miniforge (if missing)..."
 
 CONDA_DIR="/scratch/pramish_paudel/tools/miniforge"
-
+rm -rf "${CONDA_DIR}"  # Force reinstall for testing
 if [[ ! -d "${CONDA_DIR}" ]]; then
     echo "Installing Miniforge to ${CONDA_DIR}..."
     mkdir -p /scratch/pramish_paudel/tools
     cd /scratch/pramish_paudel/tools
 
-    INSTALLER="Miniforge3-Linux-x86_64.sh"
+    INSTALLER="Miniforge3-25.11.0-1-Linux-x86_64.sh"
     wget -q --show-progress \
-        "https://github.com/conda-forge/miniforge/releases/latest/download/${INSTALLER}" \
+        "https://github.com/conda-forge/miniforge/releases/download/25.11.0-1/${INSTALLER}" \
         -O "${INSTALLER}"
 
     bash "${INSTALLER}" -b -p "${CONDA_DIR}"
-    rm -f "${INSTALLER}"
-
-    echo "✅ Miniforge installed at ${CONDA_DIR}"
+    rm -f "${INSTALLER}"    echo "✅ Miniforge installed at ${CONDA_DIR}"
 else
     echo "✅ Miniforge already exists at ${CONDA_DIR}"
 fi
