@@ -98,7 +98,7 @@ cd /home/pramish_paudel/codes/b2diff
 
 pip install --upgrade setuptools pip
 
-pip install uv
+pip install uv==0.9.26
 uv pip install -r requirements.txt || {
     echo "❌ Dependency installation failed"
     exit 1
