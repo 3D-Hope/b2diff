@@ -43,9 +43,9 @@ if [[ ! -d "${CONDA_DIR}" ]]; then
     mkdir -p /scratch/pramish_paudel/tools
     cd /scratch/pramish_paudel/tools
 
-    INSTALLER="Miniforge3-Linux-x86_64.sh"
+    INSTALLER="Miniforge3-25.11.0-1-Linux-x86_64.sh"
     wget -q --show-progress \
-        "https://github.com/conda-forge/miniforge/releases/latest/download/${INSTALLER}" \
+        "https://github.com/conda-forge/miniforge/releases/download/25.11.0-1/${INSTALLER}" \
         -O "${INSTALLER}"
 
     bash "${INSTALLER}" -b -p "${CONDA_DIR}"
