@@ -84,6 +84,7 @@ export PATH="${CONDA_PREFIX}/bin:${PATH}"
 hash -r
 
 echo "Environment verification:"
+which conda 
 which python
 python --version
 which pip
@@ -96,13 +97,19 @@ echo "STAGE 5: Installing Python dependencies"
 
 cd /home/pramish_paudel/codes/b2diff
 
-pip install --upgrade setuptools pip
+# pip install --upgrade setuptools pip
 
 pip install uv==0.9.26
+
+
+
+
 uv pip install -r requirements.txt || {
     echo "❌ Dependency installation failed"
     exit 1
 }
+pip uninstall setuptools -y
+pip install setuptools==80.9.0
 
 # ------------------------------------------------------------------------------
 # STAGE 9: GPU check
