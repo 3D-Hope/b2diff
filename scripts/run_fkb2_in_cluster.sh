@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=fk_particle1
+#SBATCH --job-name=fk_particle2_steer_15
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
@@ -159,7 +159,7 @@ echo "GPUs detected: ${NUM_GPUS}"
     # pipeline.continue_from_stage=110 \
     # resume_id="tg2dp40a" \
 
-run_name="fk_particle1"
+run_name="fk_particle2_steer_15"
 # sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward if boest_only_fk is false else only 4 particles for best reward only no worst
 # batch size for sampling 12 for only best and 6 for both best and worst
 python3 ./scripts/training/train_pipeline.py \
@@ -167,8 +167,8 @@ python3 ./scripts/training/train_pipeline.py \
     train.incremental_training=true \
     train.score_fn_training=false \
     sample.fk=true \
-    sample.normalize_all=true \
-    sample.num_particles=1 \
+    sample.normalize_all=false \
+    sample.num_particles=2 \
     sample.only_best_fk=true \
     sample.fk_mix_ratio=1 \
     seed=42 \

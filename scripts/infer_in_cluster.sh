@@ -43,14 +43,13 @@ if [[ ! -d "${CONDA_DIR}" ]]; then
     mkdir -p /scratch/pramish_paudel/tools
     cd /scratch/pramish_paudel/tools
 
-    INSTALLER="Miniforge3-Linux-x86_64.sh"
+    INSTALLER="Miniforge3-25.11.0-1-Linux-x86_64.sh"
     wget -q --show-progress \
-        "https://github.com/conda-forge/miniforge/releases/latest/download/${INSTALLER}" \
+        "https://github.com/conda-forge/miniforge/releases/download/25.11.0-1/${INSTALLER}" \
         -O "${INSTALLER}"
 
     bash "${INSTALLER}" -b -p "${CONDA_DIR}"
     rm -f "${INSTALLER}"
-
     echo "✅ Miniforge installed at ${CONDA_DIR}"
 else
     echo "✅ Miniforge already exists at ${CONDA_DIR}"
@@ -102,6 +101,8 @@ uv pip install -r requirements.txt || {
     exit 1
 }
 uv pip install scipy
+pip uninstall setuptools -y
+pip install setuptools==80.9.0
 # ------------------------------------------------------------------------------
 # STAGE 9: GPU check
 # ------------------------------------------------------------------------------
@@ -130,12 +131,16 @@ echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
 run_name="infer_in_cluster"
-# python3 ./scripts/inference/inference_lora_clip_reward.py \
-# --checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/no_branching_no_selection_only_5_steps/stage13/checkpoints/checkpoint_1/ \
-# --output_dir tmp1 \
+python3 ./scripts/inference/inference_lora_clip_reward.py \
+--checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/no_branch_yes_selection_only_5_steps/stage18/checkpoints/checkpoint_1/ \
+--output_dir tmp
+
+python3 ./scripts/inference/inference_lora_clip_reward.py \
+--checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/no_branch_yes_selection_only_5_steps/stage18/checkpoints/checkpoint_1/ \
+--output_dir tmp1
 
 
-python3 ./scripts/inference/run_inception_score.py
+# python3 ./scripts/inference/run_inception_score.py
 
 rm -rf tmp/  
 rm -rf tmp1/  

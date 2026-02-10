@@ -99,7 +99,8 @@ uv pip install -r requirements.txt || {
     echo "❌ Dependency installation failed"
     exit 1
 }
-
+pip uninstall setuptools -y
+pip install setuptools==80.9.0
 # ------------------------------------------------------------------------------
 # STAGE 9: GPU check
 # ------------------------------------------------------------------------------
