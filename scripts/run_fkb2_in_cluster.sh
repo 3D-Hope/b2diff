@@ -37,7 +37,7 @@ export WANDB_ENTITY="pramish-paudel-insait"
 echo "STAGE 3: Setting up Miniforge (if missing)..."
 
 CONDA_DIR="/scratch/pramish_paudel/tools/miniforge"
-
+rm -rf "${CONDA_DIR}"  # Force reinstall for testing
 if [[ ! -d "${CONDA_DIR}" ]]; then
     echo "Installing Miniforge to ${CONDA_DIR}..."
     mkdir -p /scratch/pramish_paudel/tools
