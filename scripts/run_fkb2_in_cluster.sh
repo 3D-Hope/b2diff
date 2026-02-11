@@ -178,8 +178,8 @@ python3 ./scripts/training/train_pipeline.py \
     sample.batch_size=12 \
     train.batch_size=16 \
     sample.num_batches_per_epoch=16 \
-    train.learning_rate=3e-5
-    # train.max_grad_norm=0.005
+    train.learning_rate=3e-4 \
+    train.max_grad_norm=0.005
     # train.eps=1e-6
     # pipeline.stage_cnt=1500
 

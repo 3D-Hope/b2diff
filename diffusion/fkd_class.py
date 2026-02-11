@@ -84,6 +84,20 @@ class FKD:
         
         self.pipeline = pipeline
         self.data_type = data_type
+        
+        # Store initial values for reset
+        self.initial_reward_value = reward_min_value
+
+    def reset_state(self):
+        """
+        Reset the FKD state variables to their initial values.
+        This should be called before processing a new independent set of particles
+        (e.g., new prompt or switching between best/worst particles).
+        """
+        self.population_rs = (
+            torch.ones(self.num_particles, device=self.device) * self.initial_reward_value
+        )
+        self.product_of_potentials = torch.ones(self.num_particles).to(self.device)
 
     def resample(
         self, *, sampling_idx: int, latents: torch.Tensor, x0_preds: torch.Tensor,
@@ -192,7 +206,8 @@ class FKD:
                 resampled_images = population_images
                 resampled_latents = latents
                 self.population_rs = rs_candidates
-                indices = list(range(self.num_particles))  # Identity indices (no resampling)
+                # Create tensor of identity indices for consistency
+                indices = torch.arange(self.num_particles, device=self.device)
 
         else:
             # Resample indices based on weights

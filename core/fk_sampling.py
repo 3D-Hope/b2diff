@@ -411,6 +411,8 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                             particles_per_prompt = num_particles * particle_multiplier
                             
                             for b in range(len(prompts1) // particles_per_prompt):
+                                # CRITICAL: Reset FKD state for each new prompt
+                                fkd.reset_state()
                                 # Extract latents and log_probs for this specific prompt's particles
                                 start_idx = b * particles_per_prompt
                                 end_idx = start_idx + particles_per_prompt
@@ -457,6 +459,10 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                         log_probs=best_log_probs,
                                         get_best_indices=True
                                     )
+                                    
+                                    # CRITICAL: Reset FKD state before processing worst particles
+                                    # to prevent using best particles' state for worst particles
+                                    fkd.reset_state()
                                     
                                     # Process worst particles (second half)
                                     worst_latents = latents_t_1[mid_idx:end_idx]

@@ -258,19 +258,34 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     
     else:# Select positive and negative samples
         total_batch_size = samples['eval_scores'].shape[0]
-        # if config.sample.fk:
-        #     data_size = total_batch_size // (config.sample.batch_size*4*2)
-        # else:
-        #     data_size = total_batch_size // (config.sample.batch_size)
-        data_size = total_batch_size // (config.sample.batch_size)
-        # batch_size = config.sample.batch_size if not config.sample.fk else config.sample.batch_size*4*2
-        batch_size = config.sample.batch_size
+        
+        # Calculate number of particles per prompt for FK mode
+        if config.sample.fk:
+            fk_particles = config.sample.num_particles * (1 if getattr(config.sample, 'only_best_fk', False) else 2)
+            data_size = fk_particles  # All particles for one prompt
+            batch_size = total_batch_size // fk_particles  # Number of prompts
+        else:
+            data_size = total_batch_size // config.sample.batch_size
+            batch_size = config.sample.batch_size
+        
         for b in range(batch_size):
             cur_sample_num = 1
-            batch_samples = {
-                k: v[torch.arange(b, total_batch_size, batch_size)] 
-                for k, v in samples.items()
-            }
+            
+            # CRITICAL FIX: For FK mode, extract consecutive chunks (particles from same prompt)
+            # Instead of interleaved extraction
+            if config.sample.fk:
+                start_idx = b * fk_particles
+                end_idx = start_idx + fk_particles
+                batch_samples = {
+                    k: v[start_idx:end_idx]
+                    for k, v in samples.items()
+                }
+            else:
+                # Original logic for branching mode (interleaved extraction)
+                batch_samples = {
+                    k: v[torch.arange(b, total_batch_size, batch_size)] 
+                    for k, v in samples.items()
+                }
             
             # When incremental training is enabled, keep the full trajectory
             # Otherwise, preserve original behavior (use last `split_step` timesteps)
@@ -281,6 +296,8 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
                 t_left = config.sample.num_steps - config.split_step
                 t_right = config.sample.num_steps
             # print(f"{data_size=}, {cur_sample_num=}, {total_batch_size=}")
+            
+            # Extract data for this prompt's particles
             prompt_embeds = batch_samples['prompt_embeds'][torch.arange(0, data_size, cur_sample_num)]
             timesteps = batch_samples['timesteps'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
             log_probs = batch_samples['log_probs'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
@@ -289,10 +306,13 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
             
             score = batch_samples['eval_scores'][torch.arange(0, data_size, cur_sample_num)]
             print(f"Batch {b}: score shape before reshape: {score.shape}")
-            # Handle FK mode: use 4*1 if only_best_fk=True, otherwise 4*2
+            
+            # For FK mode: score already contains all particles for this prompt, no reshape needed
+            # For branching mode: reshape to group branches
             if config.sample.fk:
-                fk_particles = config.sample.num_particles * 1 if getattr(config.sample, 'only_best_fk', False) else config.sample.num_particles * 2
-                score = score.reshape(-1, fk_particles)
+                # score is already [num_particles * (1 or 2)] for this prompt
+                # Just keep it as 1D for finding max/min across all particles
+                score = score.reshape(1, -1)  # Shape: [1, fk_particles]
             else:
                 score = score.reshape(-1, config.split_time)
             max_idx = score.argmax(dim=1)
@@ -302,23 +322,25 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
                 for p_n in range(2):
                     if p_n == 0 and s[max_idx[j]] >= config.eval.pos_threshold:
                         used_idx = max_idx[j]
+                        # For FK mode: used_idx is directly the particle index (no j multiplier needed)
+                        # For branching mode: need to calculate actual index
                         if config.sample.fk:
-                            used_idx_2 = j * fk_particles + max_idx[j]
+                            used_idx_2 = used_idx
                         else:
-                            used_idx_2 = j * config.split_time + max_idx[j]
+                            used_idx_2 = j * config.split_time + used_idx
                     elif p_n == 1 and s[min_idx[j]] < config.eval.neg_threshold:
                         used_idx = min_idx[j]
                         if config.sample.fk:
-                            used_idx_2 = j * fk_particles + min_idx[j]
+                            used_idx_2 = used_idx
                         else:
-                            used_idx_2 = j * config.split_time + min_idx[j]
+                            used_idx_2 = j * config.split_time + used_idx
                     else:
                         if config.sample.no_selection: # this is to allow all the samples regardless of the score to be in training data in no_branching mode
                             used_idx = min_idx[j]
                             if config.sample.fk:
-                                used_idx_2 = j * fk_particles + min_idx[j]
+                                used_idx_2 = used_idx
                             else:
-                                used_idx_2 = j * config.split_time + min_idx[j]
+                                used_idx_2 = j * config.split_time + used_idx
                         else:
                             continue
                         # continue
@@ -330,7 +352,9 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
                     data['next_latents'].append(next_latents[used_idx_2])
                     data['eval_scores'].append(s[used_idx])
             
-            cur_sample_num *= config.split_time if not config.sample.fk else fk_particles
+            # Update cur_sample_num for next iteration (only used in branching mode)
+            if not config.sample.fk:
+                cur_sample_num *= config.split_time
     
     # Stack data if any samples were selected
     # if config.sample.fk:
