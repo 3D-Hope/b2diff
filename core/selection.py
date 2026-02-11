@@ -18,7 +18,7 @@ from utils.utils import seed_everything
 tqdm = partial(tqdm_lib, dynamic_ncols=True)
 
 
-def score_fn1(ground, img_dir, save_dir, config, clip_model=None, clip_preprocess=None, clip_tokenizer=None):
+def score_fn1(ground, img_dir, save_dir, config, clip_model=None, clip_preprocess=None, clip_tokenizer=None, only_raw_scores=True):
     """
     Calculate CLIP-based similarity scores for images against text prompts.
     
@@ -85,7 +85,8 @@ def score_fn1(ground, img_dir, save_dir, config, clip_model=None, clip_preproces
     similarity = torch.cat(similarity)
     R = similarity.cpu().detach()
     # print(R[:10])
-    
+    if only_raw_scores:
+        return R, {}, R
     # Save raw scores
     os.makedirs(os.path.join(save_dir, 'eval'), exist_ok=True)
     with open(os.path.join(save_dir, 'eval', 'scores.pkl'), 'wb') as f:
@@ -203,7 +204,7 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     
     # Evaluate scores
     img_dir = os.path.join(save_dir, 'images')
-    eval_scores, score_metrics, raw_clip_scores = score_fn1(ground, img_dir, save_dir, config)
+    eval_scores, score_metrics, raw_clip_scores = score_fn1(ground, img_dir, save_dir, config, only_raw_scores=False)
     print(f"{raw_clip_scores=}, dtype of eval score tensor: {eval_scores.dtype}")
     print(f"{eval_scores=}")
     samples['eval_scores'] = eval_scores  # Normalized scores for training
