@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=infer_in_cluster
 #SBATCH --partition=batch
+#SBATCH --constraint=zone-msp3
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
@@ -132,18 +133,15 @@ echo "GPUs detected: ${NUM_GPUS}"
 
 run_name="infer_in_cluster"
 python3 ./scripts/inference/inference_lora_clip_reward.py \
---checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/no_branch_yes_selection_only_5_steps/stage18/checkpoints/checkpoint_1/ \
+--checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/lr3e-6fk_particle4_steer_15/stage35/checkpoints/checkpoint_1/ \
 --output_dir tmp
 
-python3 ./scripts/inference/inference_lora_clip_reward.py \
---checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/no_branch_yes_selection_only_5_steps/stage18/checkpoints/checkpoint_1/ \
---output_dir tmp1
 
 
 # python3 ./scripts/inference/run_inception_score.py
 
-rm -rf tmp/  
-rm -rf tmp1/  
+# rm -rf tmp/  
+# rm -rf tmp1/  
 # Timing summary
 # ------------------------------------------------------------------------------
 END_TIME=$(date +%s)
