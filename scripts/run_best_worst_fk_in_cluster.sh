@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=fk_4particles
+#SBATCH --job-name=best_worst_fk_4particles
 #SBATCH --partition=batch
-#SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
+#SBATCH --constraint=zone-msp3
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
 #SBATCH --time=2-00:00:00
@@ -160,7 +160,7 @@ echo "GPUs detected: ${NUM_GPUS}"
     # pipeline.continue_from_stage=110 \
     # resume_id="tg2dp40a" \
 
-run_name="fk_4particles"
+run_name="best_worst_fk_4particles"
 # sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward if boest_only_fk is false else only 4 particles for best reward only no worst
 # batch size for sampling 12 for only best and 6 for both best and worst
 python3 ./scripts/training/train_pipeline.py \
@@ -170,13 +170,13 @@ python3 ./scripts/training/train_pipeline.py \
     sample.fk=true \
     sample.normalize_all=false \
     sample.num_particles=4 \
-    sample.only_best_fk=true \
+    sample.only_best_fk=false \
     sample.fk_mix_ratio=1 \
     seed=42 \
     sample.no_branching=false \
     sample.no_selection=false \
     split_time=2 \
-    sample.batch_size=12 \
+    sample.batch_size=6 \
     train.batch_size=16 \
     sample.num_batches_per_epoch=16 \
     train.learning_rate=3e-4 \

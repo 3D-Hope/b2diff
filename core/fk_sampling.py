@@ -258,7 +258,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
         lmbda=10.0,
         num_particles=num_particles,
         adaptive_resampling=False,
-        resample_frequency=20, # 5
+        resample_frequency=5, # 5
         resampling_t_start=5, # 5
         resampling_t_end=15,
         time_steps=20,
