@@ -424,17 +424,18 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                     best_prompts = prompts1[start_idx:end_idx]
                                     latents_0_best = latents_0[start_idx:end_idx]
                                     
-                                    resampled_best, _, selected_best_log_probs = fkd.resample(
-                                        sampling_idx=i, 
-                                        latents=best_latents, 
-                                        x0_preds=latents_0_best,
-                                        ground=best_prompts,
-                                        img_dir=os.path.join(save_dir, 'tmp_images'),
-                                        save_dir=save_dir,
-                                        config=config,
-                                        log_probs=best_log_probs,
-                                        get_best_indices=True
-                                    )
+                                    resampled_best, _, selected_best_log_probs = best_latents, _, best_log_probs
+                                    # resampled_best, _, selected_best_log_probs = fkd.resample(
+                                    #     sampling_idx=i, 
+                                    #     latents=best_latents, 
+                                    #     x0_preds=latents_0_best,
+                                    #     ground=best_prompts,
+                                    #     img_dir=os.path.join(save_dir, 'tmp_images'),
+                                    #     save_dir=save_dir,
+                                    #     config=config,
+                                    #     log_probs=best_log_probs,
+                                    #     get_best_indices=True
+                                    # )
                                     
                                     all_resampled_latents.append(resampled_best)
                                     all_selected_log_probs.append(selected_best_log_probs)
