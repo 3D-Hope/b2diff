@@ -424,18 +424,29 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                     best_prompts = prompts1[start_idx:end_idx]
                                     latents_0_best = latents_0[start_idx:end_idx]
                                     
-                                    resampled_best, _, selected_best_log_probs = best_latents, _, best_log_probs
-                                    # resampled_best, _, selected_best_log_probs = fkd.resample(
-                                    #     sampling_idx=i, 
-                                    #     latents=best_latents, 
-                                    #     x0_preds=latents_0_best,
-                                    #     ground=best_prompts,
-                                    #     img_dir=os.path.join(save_dir, 'tmp_images'),
-                                    #     save_dir=save_dir,
-                                    #     config=config,
-                                    #     log_probs=best_log_probs,
-                                    #     get_best_indices=True
-                                    # )
+                                    resampled_best, _, selected_best_log_probs, best_indices = fkd.resample(
+                                        sampling_idx=i, 
+                                        latents=best_latents, 
+                                        x0_preds=latents_0_best,
+                                        ground=best_prompts,
+                                        img_dir=os.path.join(save_dir, 'tmp_images'),
+                                        save_dir=save_dir,
+                                        config=config,
+                                        log_probs=best_log_probs,
+                                        get_best_indices=True
+                                    )
+                                    
+                                    # CRITICAL: Resample historical trajectory if resampling occurred
+                                    if best_indices is not None:
+                                        for past_t in range(len(latents[k])):
+                                            past_latents = latents[k][past_t][start_idx:end_idx]
+                                            resampled_past = past_latents[best_indices]
+                                            latents[k][past_t][start_idx:end_idx] = resampled_past
+                                        
+                                        for past_t in range(len(log_probs[k])):
+                                            past_log_probs = log_probs[k][past_t][start_idx:end_idx]
+                                            resampled_past_lp = past_log_probs[best_indices]
+                                            log_probs[k][past_t][start_idx:end_idx] = resampled_past_lp
                                     
                                     all_resampled_latents.append(resampled_best)
                                     all_selected_log_probs.append(selected_best_log_probs)
@@ -449,7 +460,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                     best_prompts = prompts1[start_idx:mid_idx]
                                     latents_0_best = latents_0[start_idx:mid_idx]
                                     
-                                    resampled_best, _, selected_best_log_probs = fkd.resample(
+                                    resampled_best, _, selected_best_log_probs, best_indices = fkd.resample(
                                         sampling_idx=i, 
                                         latents=best_latents, 
                                         x0_preds=latents_0_best,
@@ -461,6 +472,18 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                         get_best_indices=True
                                     )
                                     
+                                    # CRITICAL: Resample historical trajectory for best particles if resampling occurred
+                                    if best_indices is not None:
+                                        for past_t in range(len(latents[k])):
+                                            past_latents = latents[k][past_t][start_idx:mid_idx]
+                                            resampled_past = past_latents[best_indices]
+                                            latents[k][past_t][start_idx:mid_idx] = resampled_past
+                                        
+                                        for past_t in range(len(log_probs[k])):
+                                            past_log_probs = log_probs[k][past_t][start_idx:mid_idx]
+                                            resampled_past_lp = past_log_probs[best_indices]
+                                            log_probs[k][past_t][start_idx:mid_idx] = resampled_past_lp
+                                    
                                     # CRITICAL: Reset FKD state before processing worst particles
                                     # to prevent using best particles' state for worst particles
                                     fkd.reset_state()
@@ -471,7 +494,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                     worst_prompts = prompts1[mid_idx:end_idx]
                                     latents_0_worst = latents_0[mid_idx:end_idx]
                                     
-                                    resampled_worst, _, selected_worst_log_probs = fkd.resample(
+                                    resampled_worst, _, selected_worst_log_probs, worst_indices = fkd.resample(
                                         sampling_idx=i, 
                                         latents=worst_latents, 
                                         x0_preds=latents_0_worst,
@@ -482,6 +505,18 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                         log_probs=worst_log_probs,
                                         get_best_indices=False
                                     )
+                                    
+                                    # CRITICAL: Resample historical trajectory for worst particles if resampling occurred
+                                    if worst_indices is not None:
+                                        for past_t in range(len(latents[k])):
+                                            past_latents = latents[k][past_t][mid_idx:end_idx]
+                                            resampled_past = past_latents[worst_indices]
+                                            latents[k][past_t][mid_idx:end_idx] = resampled_past
+                                        
+                                        for past_t in range(len(log_probs[k])):
+                                            past_log_probs = log_probs[k][past_t][mid_idx:end_idx]
+                                            resampled_past_lp = past_log_probs[worst_indices]
+                                            log_probs[k][past_t][mid_idx:end_idx] = resampled_past_lp
                                     
                                     # Combine best and worst results for this prompt
                                     combined_latents = torch.cat([resampled_best, resampled_worst], dim=0)

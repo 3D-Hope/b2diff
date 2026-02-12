@@ -123,7 +123,7 @@ class FKD:
         resampling_interval = np.append(resampling_interval, self.time_steps - 1)
 
         if sampling_idx not in resampling_interval:
-            return latents, None, log_probs
+            return latents, None, log_probs, None # no resampling, return None for indices
 
         # Decode latents to population images and compute rewards
         population_images = self.latent_to_decode_fn(self.pipeline, x0_preds, self.device, self.data_type)
@@ -225,7 +225,7 @@ class FKD:
                 self.product_of_potentials[indices] * w[indices]
             )
         log_probs = log_probs[indices]
-        return resampled_latents, resampled_images, log_probs
+        return resampled_latents, resampled_images, log_probs, indices
 
 
 if __name__ == "__main__":
