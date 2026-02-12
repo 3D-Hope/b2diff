@@ -133,7 +133,7 @@ echo "GPUs detected: ${NUM_GPUS}"
 
 run_name="infer_in_cluster"
 python3 ./scripts/inference/inference_lora_clip_reward.py \
---checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/lr3e-6fk_particle4_steer_15/stage35/checkpoints/checkpoint_1/ \
+--checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/tesk_fk_no_resampling_2particles/stage35/checkpoints/checkpoint_1/ \
 --output_dir tmp
 
 
