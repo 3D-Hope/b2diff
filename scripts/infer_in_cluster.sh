@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=infer_in_cluster
 #SBATCH --partition=batch
-#SBATCH --constraint=zone-msp3
+#SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
@@ -133,7 +133,7 @@ echo "GPUs detected: ${NUM_GPUS}"
 
 run_name="infer_in_cluster"
 python3 ./scripts/inference/inference_lora_clip_reward.py \
---checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/fk_2particles/stage39/checkpoints/checkpoint_1/ \
+--checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/fk_4particles/stage42/checkpoints/checkpoint_1/ \
 --output_dir tmp
 
 
