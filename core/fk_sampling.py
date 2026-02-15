@@ -254,14 +254,14 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
         reward_fn_with_clip = score_fn1
     
     fkd = FKD(
-        potential_type="diff",
-        lmbda=10.0,
+        potential_type=config.sample.potential_type, # "max"
+        lmbda=config.sample.fk_lambda,
         num_particles=num_particles,
         adaptive_resampling=False,
-        resample_frequency=5, # 5
-        resampling_t_start=5, # 5
-        resampling_t_end=15,
-        time_steps=20,
+        resample_frequency=config.sample.resample_frequency, # 5
+        resampling_t_start=config.sample.resampling_t_start, # 5
+        resampling_t_end=config.sample.resampling_t_end,
+        time_steps=config.sample.num_steps,
         reward_fn=reward_fn_with_clip,
         device=accelerator.device,
         latent_to_decode_fn=latents_decode,
