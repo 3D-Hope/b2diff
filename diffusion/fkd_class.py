@@ -87,6 +87,11 @@ class FKD:
         
         # Store initial values for reset
         self.initial_reward_value = reward_min_value
+        self.resampling_interval = np.arange(
+            self.resampling_t_start, self.resampling_t_end + 1, self.resample_frequency
+        )
+        print(f"FKD initialized with resampling timesteps: {self.resampling_interval}, potential type: {self.potential_type}, lambda: {self.lmbda}")
+        self.resampling_interval = np.append(self.resampling_interval, self.time_steps - 1)
 
     def reset_state(self):
         """
@@ -117,10 +122,8 @@ class FKD:
             A tuple containing resampled latents and optionally resampled images.
         """
         # Check if resampling is within the allowed range and conditions
-        resampling_interval = np.arange(
-            self.resampling_t_start, self.resampling_t_end + 1, self.resample_frequency
-        )
-        resampling_interval = np.append(resampling_interval, self.time_steps - 1)
+
+        resampling_interval = self.resampling_interval
 
         if sampling_idx not in resampling_interval:
             return latents, None, log_probs, None # no resampling, return None for indices
