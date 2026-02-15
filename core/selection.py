@@ -362,7 +362,11 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     #     if logger:
     #         logger.info(f"Selected {len(data['prompt_embeds'])} samples (FK sampling - all kept)")
     if len(data['prompt_embeds']) > 0:
-        data = {k: torch.stack(v, dim=0) for k, v in data.items()}
+        # Only stack if items are lists (not already tensors)
+        first_value = next(iter(data.values()))
+        if isinstance(first_value, list):
+            data = {k: torch.stack(v, dim=0) for k, v in data.items()}
+
         
         if logger:
             logger.info(f"Selected {len(data['prompt_embeds'])} samples")
