@@ -174,7 +174,7 @@ python3 ./scripts/training/train_pipeline.py \
     sample.num_batches_per_epoch=16 \
     train.only_train_steps=20 \
     train.incremental_training=true \
-    train.normalize_all=true
+    sample.normalize_all=true
     
 
 # ------------------------------------------------------------------------------
