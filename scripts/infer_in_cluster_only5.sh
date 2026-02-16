@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=infer_in_cluster_only5
+#SBATCH --job-name=infer_in_cluster_another_only_5_steps
 #SBATCH --partition=batch
 #SBATCH --constraint=zone-msp3
 #SBATCH --gpus=h200:1
@@ -131,7 +131,7 @@ fi
 echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="only5"
+run_name="another_only_5_steps"
 stage_number=30
 python3 ./scripts/inference/inference_lora_clip_reward.py \
 --checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/${run_name}/stage${stage_number}/checkpoints/checkpoint_1/ \
