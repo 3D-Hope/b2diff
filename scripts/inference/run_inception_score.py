@@ -242,7 +242,7 @@ def sample_and_compute_is_baseline(
 def get_inception_score(image_dir):
     # Configuration
     batch_size = 32
-    splits = 10
+    splits = 3
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
