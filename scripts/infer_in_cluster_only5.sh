@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=infer_in_cluster_vanilla_ddpo
+#SBATCH --job-name=infer_in_cluster_only5
 #SBATCH --partition=batch
 #SBATCH --constraint=zone-msp3
 #SBATCH --gpus=h200:1
@@ -131,13 +131,15 @@ fi
 echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="vanilla_ddpo"
-stage_number=21
+run_name="only5"
+stage_number=30
 python3 ./scripts/inference/inference_lora_clip_reward.py \
 --checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/${run_name}/stage${stage_number}/checkpoints/checkpoint_1/ \
 --output_dir ./outputs/${run_name}/stage${stage_number} \
 --num_images 1080 \
 --batch_size 32
+
+
 
 # python3 ./scripts/inference/run_inception_score.py
 
