@@ -275,7 +275,7 @@ def get_inception_score(image_dir):
     print("="*50)
     
     # Save results
-    output_file = os.path.join(os.path.dirname(image_dir), "inception_score.txt")
+    output_file = os.path.join(image_dir, "inception_score.txt")
     with open(output_file, 'w') as f:
         f.write(f"Inception Score (CLIP-ViT-H-14-laion2B-s32B-b79K)\n")
         f.write(f"Image Directory: {image_dir}\n")
