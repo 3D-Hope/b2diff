@@ -193,11 +193,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
     if getattr(config.sample, 'brach_at_before_fk', -1) > 0:
         assert config.sample.fk, "Branching is only supported for FK sampling"
         assert config.sample.brach_at_before_fk < config.sample.resampling_t_start, "Branching time must be before resampling time"
-        num_particles = 1
-        particle_multiplier = 1
-    else:
-        num_particles = target_num_particles
-        particle_multiplier = final_particle_multiplier
+
 
     samples = []
     split_steps = [config.split_step]
@@ -280,12 +276,20 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
     )
         
     # Main sampling loop
+    # Main sampling loop
     for idx in tqdm(
         range(config.sample.num_batches_per_epoch),
         disable=not accelerator.is_local_main_process,
         position=0,
         desc="Sampling batches"
     ):
+        if getattr(config.sample, 'brach_at_before_fk', -1) > 0 and idx < config.sample.brach_at_before_fk:
+            num_particles = 1
+            particle_multiplier = 1
+        else:
+            num_particles = target_num_particles
+            particle_multiplier = final_particle_multiplier
+
         # generate prompts
         if len(config.prompt) != 0:
             prompts1 = [config.prompt for _ in range(config.sample.batch_size)]
