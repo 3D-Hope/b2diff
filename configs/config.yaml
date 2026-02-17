@@ -84,7 +84,9 @@ train:
   save_interval: 2
   num_checkpoint_limit: 21
   incremental_training: false # incremental training but the random timesteps in each loop
-  only_train_steps: 5
+  only_train_steps: -1
+  incremental_timesteps: [5,10,15]
+  num_stages_per_increment: 10
   # progressive_incremental_training: true # incremental training with fixed uniformly spread timesteps in each loop
   score_fn_training: false # whether to train the score function or not
 
