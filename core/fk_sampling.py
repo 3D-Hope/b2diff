@@ -266,7 +266,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
     fkd = FKD(
         potential_type=config.sample.potential_type, # "max"
         lmbda=config.sample.fk_lambda,
-        num_particles=num_particles,
+        num_particles=target_num_particles,
         adaptive_resampling=False,
         resample_frequency=config.sample.resample_frequency, # 5
         resampling_t_start=config.sample.resampling_t_start, # 5
