@@ -185,16 +185,26 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
     # SAMPLING LOOP
     pipeline.unet.eval()
     
-    num_particles = config.sample.num_particles # 4
+    target_num_particles = config.sample.num_particles # 4
+    
+    # Determine particle multiplier for the final state
+    final_particle_multiplier = 1 if (config.sample.fk and getattr(config.sample, 'only_best_fk', False)) else 2
+    
+    if getattr(config.sample, 'brach_at_before_fk', -1) > 0:
+        assert config.sample.fk, "Branching is only supported for FK sampling"
+        assert config.sample.brach_at_before_fk < config.sample.resampling_t_start, "Branching time must be before resampling time"
+        num_particles = 1
+        particle_multiplier = 1
+    else:
+        num_particles = target_num_particles
+        particle_multiplier = final_particle_multiplier
+
     samples = []
     split_steps = [config.split_step]
     split_times = [config.split_time]
     
     total_prompts = []
     total_samples = None
-    
-    # Determine particle multiplier based on only_best_fk setting
-    particle_multiplier = 1 if (config.sample.fk and getattr(config.sample, 'only_best_fk', False)) else 2
     
     if config.sample.fk:
         sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.batch_size * num_particles * particle_multiplier, 1, 1)
@@ -367,6 +377,38 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
             # sample
             with autocast():
                 with torch.no_grad():
+                    
+                    if getattr(config.sample, 'brach_at_before_fk', -1) > 0 and i == config.sample.brach_at_before_fk:
+                        print(f"Branching at step {i} from {num_particles} to {target_num_particles} particles class-wise")
+                        
+                        # Update counts
+                        num_particles = target_num_particles
+                        particle_multiplier = final_particle_multiplier
+                        
+                        # We started with 1 particle (multiplier 1).
+                        # We want to reach num_particles * particle_multiplier.
+                        expansion_factor = num_particles * particle_multiplier
+
+                            
+                        # Expand prompts
+                        prompts1 = [prompt for prompt in prompts1 for _ in range(expansion_factor)]
+                        
+                        # Expand embeddings
+                        # prompt_embeds1_combine shape: (batch_size * 1, seq_len, dim)
+                        prompt_embeds1_combine = prompt_embeds1_combine.repeat_interleave(expansion_factor, dim=0)
+                        sample_neg_prompt_embeds = sample_neg_prompt_embeds.repeat_interleave(expansion_factor, dim=0)
+                        prompt_embeds1 = prompt_embeds1.repeat_interleave(expansion_factor, dim=0)
+                        
+                        # Expand latents history
+                        for k in range(len(latents)):
+                            for idx_t in range(len(latents[k])):
+                                latents[k][idx_t] = latents[k][idx_t].repeat_interleave(expansion_factor, dim=0)
+                        
+                        # Expand log_probs history
+                        for k in range(len(log_probs)):
+                            for idx_t in range(len(log_probs[k])):
+                                log_probs[k][idx_t] = log_probs[k][idx_t].repeat_interleave(expansion_factor, dim=0)
+
                     if not config.sample.no_branching and not config.sample.fk and ((config.sample.num_steps-i) in split_steps): 
                         branch_num = split_steps.index(config.sample.num_steps-i)
                         branch_num = split_times[branch_num]
