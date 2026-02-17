@@ -202,10 +202,15 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
     total_prompts = []
     total_samples = None
     
-    if config.sample.fk:
-        sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.batch_size * num_particles * particle_multiplier, 1, 1)
+    if getattr(config.sample, 'brach_at_before_fk', -1) > 0:
+        num_particles = 1
+        particle_multiplier = 1
     else:
-        sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.batch_size, 1, 1)
+        num_particles = target_num_particles
+        particle_multiplier = final_particle_multiplier
+    
+    # Note: sample_neg_prompt_embeds will be created inside the batch loop
+    # to avoid shape issues when branching occurs
         
     # Load existing prompts and samples if available
     if os.path.exists(os.path.join(save_dir, 'prompt.json')):
@@ -272,7 +277,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
         device=accelerator.device,
         latent_to_decode_fn=latents_decode,
         pipeline=pipeline,
-        data_type=sample_neg_prompt_embeds.dtype
+        data_type=neg_prompt_embed.dtype
     )
         
     # Main sampling loop
@@ -283,12 +288,19 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
         position=0,
         desc="Sampling batches"
     ):
-        if getattr(config.sample, 'brach_at_before_fk', -1) > 0 and idx < config.sample.brach_at_before_fk:
+        if getattr(config.sample, 'brach_at_before_fk', -1) > 0:
             num_particles = 1
             particle_multiplier = 1
         else:
             num_particles = target_num_particles
             particle_multiplier = final_particle_multiplier
+        
+        # Create sample_neg_prompt_embeds for this batch
+        # This ensures correct shape even when branching occurs
+        if config.sample.fk:
+            sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.batch_size * num_particles * particle_multiplier, 1, 1)
+        else:
+            sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.batch_size, 1, 1)
 
         # generate prompts
         if len(config.prompt) != 0:
@@ -382,8 +394,8 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
             with autocast():
                 with torch.no_grad():
                     
-                    if getattr(config.sample, 'brach_at_before_fk', -1) > 0 and i == config.sample.brach_at_before_fk:
-                        print(f"Branching at step {i} from {num_particles} to {target_num_particles} particles class-wise")
+                    if getattr(config.sample, 'brach_at_before_fk', -1) > 0 and i == config.sample.brach_at_before_fk - 1:
+                        print(f"Branching at step {i + 1} from {num_particles} to {target_num_particles} particles prompt-wise")
                         
                         # Update counts
                         num_particles = target_num_particles
@@ -577,7 +589,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                         
                         latents[k].append(latents_t_1)
                         log_probs[k].append(log_prob)
-
         sample_num = len(latents)
         total_prompts.extend(prompts1*sample_num)
 
