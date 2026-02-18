@@ -279,6 +279,14 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
         pipeline=pipeline,
         data_type=neg_prompt_embed.dtype
     )
+
+    enable_fk_then_branch = getattr(config.sample, 'fk_then_branch_at', -1) > 0
+    
+    if enable_fk_then_branch:
+        fk_resample_index = 5
+        fk_select_index = 10
+        fk_num_splits = config.split_time
+        assert config.sample.fk, "fk_then_branch_at requires FK sampling to be enabled"
         
     # Main sampling loop
     # Main sampling loop
@@ -288,7 +296,10 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
         position=0,
         desc="Sampling batches"
     ):
-        if getattr(config.sample, 'brach_at_before_fk', -1) > 0:
+        if enable_fk_then_branch:
+            num_particles = target_num_particles
+            particle_multiplier = 1
+        elif getattr(config.sample, 'brach_at_before_fk', -1) > 0:
             num_particles = 1
             particle_multiplier = 1
         else:
@@ -464,124 +475,252 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                             # Process each prompt separately with its particles
                             all_resampled_latents = []
                             all_selected_log_probs = []
-                            
-                            only_best = getattr(config.sample, 'only_best_fk', False)
-                            particles_per_prompt = num_particles * particle_multiplier
-                            
-                            for b in range(len(prompts1) // particles_per_prompt):
-                                # CRITICAL: Reset FKD state for each new prompt
-                                fkd.reset_state()
-                                # Extract latents and log_probs for this specific prompt's particles
-                                start_idx = b * particles_per_prompt
-                                end_idx = start_idx + particles_per_prompt
-                                
-                                if only_best:
-                                    # Only process best particles
-                                    best_latents = latents_t_1[start_idx:end_idx]
-                                    best_log_probs = log_prob[start_idx:end_idx]
-                                    best_prompts = prompts1[start_idx:end_idx]
-                                    latents_0_best = latents_0[start_idx:end_idx]
-                                    
-                                    resampled_best, _, selected_best_log_probs, best_indices = fkd.resample(
-                                        sampling_idx=i, 
-                                        latents=best_latents, 
-                                        x0_preds=latents_0_best,
-                                        ground=best_prompts,
-                                        img_dir=os.path.join(save_dir, 'tmp_images'),
-                                        save_dir=save_dir,
-                                        config=config,
-                                        log_probs=best_log_probs,
-                                        get_best_indices=True
-                                    )
-                                    
-                                    # CRITICAL: Resample historical trajectory if resampling occurred
-                                    if best_indices is not None:
-                                        for past_t in range(len(latents[k])):
-                                            past_latents = latents[k][past_t][start_idx:end_idx]
-                                            resampled_past = past_latents[best_indices]
-                                            latents[k][past_t][start_idx:end_idx] = resampled_past
-                                        
-                                        for past_t in range(len(log_probs[k])):
-                                            past_log_probs = log_probs[k][past_t][start_idx:end_idx]
-                                            resampled_past_lp = past_log_probs[best_indices]
-                                            log_probs[k][past_t][start_idx:end_idx] = resampled_past_lp
-                                    
-                                    all_resampled_latents.append(resampled_best)
-                                    all_selected_log_probs.append(selected_best_log_probs)
-                                else:
-                                    # Process both best and worst particles
-                                    mid_idx = start_idx + num_particles
-                                    
-                                    # Process best particles (first half)
-                                    best_latents = latents_t_1[start_idx:mid_idx]
-                                    best_log_probs = log_prob[start_idx:mid_idx]
-                                    best_prompts = prompts1[start_idx:mid_idx]
-                                    latents_0_best = latents_0[start_idx:mid_idx]
-                                    
-                                    resampled_best, _, selected_best_log_probs, best_indices = fkd.resample(
-                                        sampling_idx=i, 
-                                        latents=best_latents, 
-                                        x0_preds=latents_0_best,
-                                        ground=best_prompts,
-                                        img_dir=os.path.join(save_dir, 'tmp_images'),
-                                        save_dir=save_dir,
-                                        config=config,
-                                        log_probs=best_log_probs,
-                                        get_best_indices=True
-                                    )
-                                    
-                                    # CRITICAL: Resample historical trajectory for best particles if resampling occurred
-                                    if best_indices is not None:
-                                        for past_t in range(len(latents[k])):
-                                            past_latents = latents[k][past_t][start_idx:mid_idx]
-                                            resampled_past = past_latents[best_indices]
-                                            latents[k][past_t][start_idx:mid_idx] = resampled_past
-                                        
-                                        for past_t in range(len(log_probs[k])):
-                                            past_log_probs = log_probs[k][past_t][start_idx:mid_idx]
-                                            resampled_past_lp = past_log_probs[best_indices]
-                                            log_probs[k][past_t][start_idx:mid_idx] = resampled_past_lp
-                                    
-                                    # CRITICAL: Reset FKD state before processing worst particles
-                                    # to prevent using best particles' state for worst particles
+
+                            if enable_fk_then_branch:
+                                # ===== FK-THEN-BRANCH FLOW WITH CONSISTENT LOG_PROB TRACKING =====
+                                # SHAPE EVOLUTION:
+                                #   i=0-4:   latents[k][t] = (batch*num_particles, 4, 64, 64)
+                                #            log_probs[k][t] = (batch*num_particles,)  [PARALLEL]
+                                #   i=5:     Resample with resample_indices → both remapped identically
+                                #   i=6-9:   Continue independent evolution (latents & log_probs together)
+                                #   i=10:    Select best + duplicate → latents[k][t] = (batch*fk_num_splits, 4, 64, 64)
+                                #                                      log_probs[k][t] = (batch*fk_num_splits,) [MATCH]
+                                #   i=11+:   Each split diverges with full history intact
+                                # ===================================================================
+                                particles_per_prompt = num_particles
+                                branch_now = i == fk_select_index
+                                if branch_now:
+                                    # Initialize new history lists for branching
+                                    # CRITICAL: len(latents[k]) == len(log_probs[k]) = number of past timesteps
+                                    new_latents_history = [[] for _ in range(len(latents[k]))]
+                                    new_log_probs_history = [[] for _ in range(len(log_probs[k]))]
+
+                                for b in range(len(prompts1) // particles_per_prompt):
                                     fkd.reset_state()
+                                    start_idx = b * particles_per_prompt
+                                    end_idx = start_idx + particles_per_prompt
+
+                                    current_latents = latents_t_1[start_idx:end_idx]
+                                    current_log_probs = log_prob[start_idx:end_idx]
+                                    current_prompts = prompts1[start_idx:end_idx]
+                                    current_latents_0 = latents_0[start_idx:end_idx]
+
+                                    if i in (fk_resample_index, fk_select_index):
+                                        resampled_latents, _, selected_log_probs, resample_indices = fkd.resample(
+                                            sampling_idx=i,
+                                            latents=current_latents,
+                                            x0_preds=current_latents_0,
+                                            ground=current_prompts,
+                                            img_dir=os.path.join(save_dir, 'tmp_images'),
+                                            save_dir=save_dir,
+                                            config=config,
+                                            log_probs=current_log_probs,
+                                            get_best_indices=True
+                                        )
+
+                                        if resample_indices is not None:
+                                            # CRITICAL: Remap BOTH latents and log_probs history with same indices
+                                            for past_t in range(len(latents[k])):
+                                                past_latents = latents[k][past_t][start_idx:end_idx]
+                                                resampled_past = past_latents[resample_indices]
+                                                if branch_now:
+                                                    selected_past = resampled_past[0:1].repeat(fk_num_splits, 1, 1, 1)
+                                                    new_latents_history[past_t].append(selected_past)
+                                                else:
+                                                    latents[k][past_t][start_idx:end_idx] = resampled_past
+
+                                            # PARALLEL LOG_PROB REMAPPING: Use same resample_indices
+                                            for past_t in range(len(log_probs[k])):
+                                                past_log_probs = log_probs[k][past_t][start_idx:end_idx]
+                                                resampled_past_lp = past_log_probs[resample_indices]  # Same indices
+                                                if branch_now:
+                                                    # Select index 0 (best particle after resampling)
+                                                    selected_past_lp = resampled_past_lp[0:1].repeat(fk_num_splits)
+                                                    new_log_probs_history[past_t].append(selected_past_lp)
+                                                else:
+                                                    # Non-branching: update in-place
+                                                    log_probs[k][past_t][start_idx:end_idx] = resampled_past_lp
+                                        elif branch_now:
+                                            # No resampling happened, but still branching: select index 0 from current particles
+                                            # CRITICAL: Both latents and log_probs select same particles to maintain consistency
+                                            for past_t in range(len(latents[k])):
+                                                past_latents = latents[k][past_t][start_idx:end_idx]
+                                                selected_past = past_latents[0:1].repeat(fk_num_splits, 1, 1, 1)
+                                                new_latents_history[past_t].append(selected_past)
+
+                                            # PARALLEL LOG_PROB SELECTION: Select same index 0 for each timestep
+                                            for past_t in range(len(log_probs[k])):
+                                                past_log_probs = log_probs[k][past_t][start_idx:end_idx]
+                                                selected_past_lp = past_log_probs[0:1].repeat(fk_num_splits)  # Same index selection
+                                                new_log_probs_history[past_t].append(selected_past_lp)
+                                    else:
+                                        resampled_latents = current_latents
+                                        selected_log_probs = current_log_probs
+
+                                    if branch_now:
+                                        selected_latent = resampled_latents[0:1].repeat(fk_num_splits, 1, 1, 1)
+                                        selected_lp = selected_log_probs[0:1].repeat(fk_num_splits)
+                                        all_resampled_latents.append(selected_latent)
+                                        all_selected_log_probs.append(selected_lp)
+                                    else:
+                                        all_resampled_latents.append(resampled_latents)
+                                        all_selected_log_probs.append(selected_log_probs)
+
+                                # Concatenate current timestep results across all prompts
+                                latents_t_1 = torch.cat(all_resampled_latents, dim=0)
+                                log_prob = torch.cat(all_selected_log_probs, dim=0)
+                                # CONSISTENCY CHECK: both should have shape (total_particles,) and (total_particles, channels, h, w)
+
+                                if branch_now:
+                                    # CRITICAL: Replace all past history with branched selected particles
+                                    # Concatenate accumulated history from all prompts
+                                    for past_t in range(len(latents[k])):
+                                        latents[k][past_t] = torch.cat(new_latents_history[past_t], dim=0)
                                     
-                                    # Process worst particles (second half)
-                                    worst_latents = latents_t_1[mid_idx:end_idx]
-                                    worst_log_probs = log_prob[mid_idx:end_idx]
-                                    worst_prompts = prompts1[mid_idx:end_idx]
-                                    latents_0_worst = latents_0[mid_idx:end_idx]
+                                    # PARALLEL LOG_PROB UPDATE: Must match latents history exactly
+                                    for past_t in range(len(log_probs[k])):
+                                        log_probs[k][past_t] = torch.cat(new_log_probs_history[past_t], dim=0)
                                     
-                                    resampled_worst, _, selected_worst_log_probs, worst_indices = fkd.resample(
-                                        sampling_idx=i, 
-                                        latents=worst_latents, 
-                                        x0_preds=latents_0_worst,
-                                        ground=worst_prompts,
-                                        img_dir=os.path.join(save_dir, 'tmp_images'),
-                                        save_dir=save_dir,
-                                        config=config,
-                                        log_probs=worst_log_probs,
-                                        get_best_indices=False
+                                    # Verification: shapes should match
+                                    # latents[k][past_t].shape[0] == log_probs[k][past_t].shape[0] for all past_t
+
+                                    base_prompts = [
+                                        prompts1[p * particles_per_prompt]
+                                        for p in range(len(prompts1) // particles_per_prompt)
+                                    ]
+                                    prompts1 = [prompt for prompt in base_prompts for _ in range(fk_num_splits)]
+
+                                    prompt_embeds1 = prompt_embeds1[::particles_per_prompt].repeat_interleave(
+                                        fk_num_splits, dim=0
                                     )
+                                    prompt_embeds1_combine = prompt_embeds1_combine[::particles_per_prompt].repeat_interleave(
+                                        fk_num_splits, dim=0
+                                    )
+                                    sample_neg_prompt_embeds = sample_neg_prompt_embeds[::particles_per_prompt].repeat_interleave(
+                                        fk_num_splits, dim=0
+                                    )
+
+                                    num_particles = fk_num_splits
+                                    particle_multiplier = 1
+
+                            else:
+                                only_best = getattr(config.sample, 'only_best_fk', False)
+                                particles_per_prompt = num_particles * particle_multiplier
+                                
+                                for b in range(len(prompts1) // particles_per_prompt):
+                                    # CRITICAL: Reset FKD state for each new prompt
+                                    fkd.reset_state()
+                                    # Extract latents and log_probs for this specific prompt's particles
+                                    start_idx = b * particles_per_prompt
+                                    end_idx = start_idx + particles_per_prompt
                                     
-                                    # CRITICAL: Resample historical trajectory for worst particles if resampling occurred
-                                    if worst_indices is not None:
-                                        for past_t in range(len(latents[k])):
-                                            past_latents = latents[k][past_t][mid_idx:end_idx]
-                                            resampled_past = past_latents[worst_indices]
-                                            latents[k][past_t][mid_idx:end_idx] = resampled_past
+                                    if only_best:
+                                        # Only process best particles
+                                        best_latents = latents_t_1[start_idx:end_idx]
+                                        best_log_probs = log_prob[start_idx:end_idx]
+                                        best_prompts = prompts1[start_idx:end_idx]
+                                        latents_0_best = latents_0[start_idx:end_idx]
                                         
-                                        for past_t in range(len(log_probs[k])):
-                                            past_log_probs = log_probs[k][past_t][mid_idx:end_idx]
-                                            resampled_past_lp = past_log_probs[worst_indices]
-                                            log_probs[k][past_t][mid_idx:end_idx] = resampled_past_lp
-                                    
-                                    # Combine best and worst results for this prompt
-                                    combined_latents = torch.cat([resampled_best, resampled_worst], dim=0)
-                                    combined_log_probs = torch.cat([selected_best_log_probs, selected_worst_log_probs], dim=0)
-                                    
-                                    all_resampled_latents.append(combined_latents)
-                                    all_selected_log_probs.append(combined_log_probs)
+                                        resampled_best, _, selected_best_log_probs, best_indices = fkd.resample(
+                                            sampling_idx=i, 
+                                            latents=best_latents, 
+                                            x0_preds=latents_0_best,
+                                            ground=best_prompts,
+                                            img_dir=os.path.join(save_dir, 'tmp_images'),
+                                            save_dir=save_dir,
+                                            config=config,
+                                            log_probs=best_log_probs,
+                                            get_best_indices=True
+                                        )
+                                        
+                                        # CRITICAL: Resample historical trajectory if resampling occurred
+                                        if best_indices is not None:
+                                            for past_t in range(len(latents[k])):
+                                                past_latents = latents[k][past_t][start_idx:end_idx]
+                                                resampled_past = past_latents[best_indices]
+                                                latents[k][past_t][start_idx:end_idx] = resampled_past
+                                            
+                                            for past_t in range(len(log_probs[k])):
+                                                past_log_probs = log_probs[k][past_t][start_idx:end_idx]
+                                                resampled_past_lp = past_log_probs[best_indices]
+                                                log_probs[k][past_t][start_idx:end_idx] = resampled_past_lp
+                                        
+                                        all_resampled_latents.append(resampled_best)
+                                        all_selected_log_probs.append(selected_best_log_probs)
+                                    else:
+                                        # Process both best and worst particles
+                                        mid_idx = start_idx + num_particles
+                                        
+                                        # Process best particles (first half)
+                                        best_latents = latents_t_1[start_idx:mid_idx]
+                                        best_log_probs = log_prob[start_idx:mid_idx]
+                                        best_prompts = prompts1[start_idx:mid_idx]
+                                        latents_0_best = latents_0[start_idx:mid_idx]
+                                        
+                                        resampled_best, _, selected_best_log_probs, best_indices = fkd.resample(
+                                            sampling_idx=i, 
+                                            latents=best_latents, 
+                                            x0_preds=latents_0_best,
+                                            ground=best_prompts,
+                                            img_dir=os.path.join(save_dir, 'tmp_images'),
+                                            save_dir=save_dir,
+                                            config=config,
+                                            log_probs=best_log_probs,
+                                            get_best_indices=True
+                                        )
+                                        
+                                        # CRITICAL: Resample historical trajectory for best particles if resampling occurred
+                                        if best_indices is not None:
+                                            for past_t in range(len(latents[k])):
+                                                past_latents = latents[k][past_t][start_idx:mid_idx]
+                                                resampled_past = past_latents[best_indices]
+                                                latents[k][past_t][start_idx:mid_idx] = resampled_past
+                                            
+                                            for past_t in range(len(log_probs[k])):
+                                                past_log_probs = log_probs[k][past_t][start_idx:mid_idx]
+                                                resampled_past_lp = past_log_probs[best_indices]
+                                                log_probs[k][past_t][start_idx:mid_idx] = resampled_past_lp
+                                        
+                                        # CRITICAL: Reset FKD state before processing worst particles
+                                        # to prevent using best particles' state for worst particles
+                                        fkd.reset_state()
+                                        
+                                        # Process worst particles (second half)
+                                        worst_latents = latents_t_1[mid_idx:end_idx]
+                                        worst_log_probs = log_prob[mid_idx:end_idx]
+                                        worst_prompts = prompts1[mid_idx:end_idx]
+                                        latents_0_worst = latents_0[mid_idx:end_idx]
+                                        
+                                        resampled_worst, _, selected_worst_log_probs, worst_indices = fkd.resample(
+                                            sampling_idx=i, 
+                                            latents=worst_latents, 
+                                            x0_preds=latents_0_worst,
+                                            ground=worst_prompts,
+                                            img_dir=os.path.join(save_dir, 'tmp_images'),
+                                            save_dir=save_dir,
+                                            config=config,
+                                            log_probs=worst_log_probs,
+                                            get_best_indices=False
+                                        )
+                                        
+                                        # CRITICAL: Resample historical trajectory for worst particles if resampling occurred
+                                        if worst_indices is not None:
+                                            for past_t in range(len(latents[k])):
+                                                past_latents = latents[k][past_t][mid_idx:end_idx]
+                                                resampled_past = past_latents[worst_indices]
+                                                latents[k][past_t][mid_idx:end_idx] = resampled_past
+                                            
+                                            for past_t in range(len(log_probs[k])):
+                                                past_log_probs = log_probs[k][past_t][mid_idx:end_idx]
+                                                resampled_past_lp = past_log_probs[worst_indices]
+                                                log_probs[k][past_t][mid_idx:end_idx] = resampled_past_lp
+                                        
+                                        # Combine best and worst results for this prompt
+                                        combined_latents = torch.cat([resampled_best, resampled_worst], dim=0)
+                                        combined_log_probs = torch.cat([selected_best_log_probs, selected_worst_log_probs], dim=0)
+                                        
+                                        all_resampled_latents.append(combined_latents)
+                                        all_selected_log_probs.append(combined_log_probs)
                             
                             # Concatenate all results back together
                             latents_t_1 = torch.cat(all_resampled_latents, dim=0)

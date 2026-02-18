@@ -61,6 +61,7 @@ sample:
   fk_lambda: 2.0
   brach_at_before_fk: -1
   always_branch_at: -1
+  fk_then_branch_at: -1
 # Training configuration
 train:
   batch_size: 8
