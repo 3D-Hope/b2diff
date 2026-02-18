@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=branch_lambda_2_fk_4particles
+#SBATCH --job-name=only_10_branch_lambda_2_fk_4particles
 #SBATCH --partition=batch
-#SBATCH --constraint=zone-msp3
+#SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
@@ -160,7 +160,7 @@ echo "GPUs detected: ${NUM_GPUS}"
     # pipeline.continue_from_stage=110 \
     # resume_id="tg2dp40a" \
 
-run_name="branch_lambda_2_fk_4particles"
+run_name="only_10_branch_lambda_2_fk_4particles"
 # sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward if boest_only_fk is false else only 4 particles for best reward only no worst
 # batch size for sampling 12 for only best and 6 for both best and worst
 python3 ./scripts/training/train_pipeline.py \
