@@ -177,7 +177,11 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
     # SAMPLING LOOP
     pipeline.unet.eval()
     samples = []
-    split_steps = [config.split_step]
+    if config.sample.always_branch_at > 0:
+        split_steps = [config.sample.always_branch_at]
+    else:
+        split_steps = [config.split_step]
+
     split_times = [config.split_time]
     
     total_prompts = []
