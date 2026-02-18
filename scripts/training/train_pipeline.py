@@ -203,6 +203,12 @@ class TrainingPipeline:
         Returns:
             cur_split_step: Calculated split step value
         """
+        if self.config.train.bpt == "custom": #TODO: make this configurable
+            interval = 20 - 10
+            level = (stage_idx * interval) // 100
+            cur_split_step = min(20,(level +1)*4)
+            return cur_split_step
+        
         interval = self.config.pipeline.split_step_right - self.config.pipeline.split_step_left + 1
         level = (stage_idx * interval) // self.config.pipeline.stage_cnt
         cur_split_step = level + self.config.pipeline.split_step_left
