@@ -132,7 +132,7 @@ echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
 run_name="custom_bpt_incremental_4_8_12_16_fk"
-stage_number=11
+stage_number=13
 python3 ./scripts/inference/inference_lora_clip_reward.py \
 --checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/${run_name}/stage${stage_number}/checkpoints/checkpoint_1/ \
 --output_dir ./outputs/${run_name}/stage${stage_number} \
