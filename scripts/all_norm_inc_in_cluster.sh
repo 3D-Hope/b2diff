@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=5_only_lambda_2_fk_4particle_seed_69
+#SBATCH --job-name=all_norm_inc
 #SBATCH --partition=batch
 #SBATCH --constraint=zone-msp3
 #SBATCH --gpus=h200:1
@@ -160,33 +160,23 @@ echo "GPUs detected: ${NUM_GPUS}"
     # pipeline.continue_from_stage=110 \
     # resume_id="tg2dp40a" \
 
-run_name="5_only_lambda_2_fk_4particle_seed_69"
+run_name="all_norm_inc"
 # sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward if boest_only_fk is false else only 4 particles for best reward only no worst
 # batch size for sampling 12 for only best and 6 for both best and worst
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
-    train.incremental_training=true \
-    train.only_train_steps=5 \
-    train.score_fn_training=false \
-    sample.fk=true \
-    sample.normalize_all=false \
-    sample.num_particles=4 \
-    sample.only_best_fk=true \
-    sample.fk_mix_ratio=1 \
-    sample.potential_type="max" \
-    sample.fk_lambda=2.0 \
-    sample.resample_frequency=4 \
-    sample.resampling_t_start=4 \
-    sample.resampling_t_end=16 \
-    seed=69 \
-    sample.no_branching=false \
-    sample.no_selection=false \
-    split_time=2 \
-    sample.batch_size=12 \
+    seed=42 \
+    split_time=1 \
+    sample.batch_size=16 \
     train.batch_size=16 \
     sample.num_batches_per_epoch=16 \
     train.learning_rate=3e-4 \
-    train.max_grad_norm=0.005
+    train.max_grad_norm=0.005 \
+    train.incremental_training=true \
+    sample.no_branching=true \
+    sample.no_selection=true
+    train.incremental_timesteps=[5,10,15,20] \
+    train.num_stages_per_increment=10
     # train.eps=1e-6
     # pipeline.stage_cnt=1500
 
