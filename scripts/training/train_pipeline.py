@@ -313,7 +313,7 @@ class TrainingPipeline:
             else:
                 num_stages_per_increment = self.config.train.num_stages_per_increment
                 incremental_timesteps = self.config.train.incremental_timesteps
-                target_count = incremental_timesteps[stage_idx // num_stages_per_increment]
+                target_count = incremental_timesteps[min(len(incremental_timesteps) - 1, stage_idx // num_stages_per_increment)]
             
             if target_count < total_timesteps:
                 # Add uniformly spaced new indices until reaching target_count
