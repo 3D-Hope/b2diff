@@ -296,6 +296,10 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
             else:
                 t_left = config.sample.num_steps - config.split_step
                 t_right = config.sample.num_steps
+
+            if config.train.only_last_n_steps > 0:
+                t_left = config.sample.num_steps - config.train.only_last_n_steps
+
             # print(f"{data_size=}, {cur_sample_num=}, {total_batch_size=}")
             
             # Extract data for this prompt's particles
