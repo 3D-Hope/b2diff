@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=infer_in_cluster_last_only_10_all_norm
 #SBATCH --partition=batch
-#SBATCH --constraint=zone-msp3
+#SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
