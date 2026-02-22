@@ -111,6 +111,7 @@ uv pip install -r requirements.txt || {
 }
 pip uninstall setuptools -y
 pip install setuptools==80.9.0
+pip install opencv-python scikit-learn
 
 # ------------------------------------------------------------------------------
 # STAGE 9: GPU check
