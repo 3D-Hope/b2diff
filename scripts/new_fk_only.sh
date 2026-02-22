@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=geometric_fk_only
+#SBATCH --job-name=new_fk_only
 #SBATCH --partition=batch
 #SBATCH --constraint=zone-msp3
 #SBATCH --gpus=h200:1
@@ -111,8 +111,6 @@ uv pip install -r requirements.txt || {
 }
 pip uninstall setuptools -y
 pip install setuptools==80.9.0
-pip install opencv-python scikit-learn
-
 
 # ------------------------------------------------------------------------------
 # STAGE 9: GPU check
@@ -162,7 +160,7 @@ echo "GPUs detected: ${NUM_GPUS}"
     # pipeline.continue_from_stage=110 \
     # resume_id="tg2dp40a" \
 
-run_name="geometric_fk_only"
+run_name="new_fk_only"
 # sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward if boest_only_fk is false else only 4 particles for best reward only no worst
 # batch size for sampling 12 for only best and 6 for both best and worst
 python3 ./scripts/training/train_pipeline.py \
@@ -189,9 +187,7 @@ python3 ./scripts/training/train_pipeline.py \
     train.learning_rate=3e-4 \
     train.max_grad_norm=0.005 \
     train.incremental_timesteps=[4,8,12,16] \
-    train.num_stages_per_increment=10 \
-    reward_fn=geometric \
-    prompt_file=configs/prompt/template4_train.json
+    train.num_stages_per_increment=10
     # train.eps=1e-6
     # pipeline.stage_cnt=1500
 
