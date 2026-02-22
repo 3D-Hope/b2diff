@@ -14,6 +14,7 @@ from tqdm import tqdm as tqdm_lib
 from bert_score import score, BERTScorer
 import open_clip
 from utils.utils import seed_everything
+from core.utils.geometric_rewards import ImageGeometricReward
 
 tqdm = partial(tqdm_lib, dynamic_ncols=True)
 
@@ -170,6 +171,118 @@ def score_fn1(ground, img_dir, save_dir, config, clip_model=None, clip_preproces
     return sum_scores, metrics, R
 
 
+def geometric_algebraic_score_fn(ground, img_dir, save_dir, config,
+                                  num_samples=5, min_length=20.0, threshold_c=0.03,
+                                  only_raw_scores=True,
+                                  # unused kwargs kept for signature compatibility with score_fn1
+                                  clip_model=None, clip_preprocess=None, clip_tokenizer=None):
+    """
+    Geometric reward function based on algebraic vanishing-point intersection quality.
+    Drop-in replacement for score_fn1 — same call signature and return contract.
+
+    Args:
+        ground: list[str] — text prompts, one per image (same order as sorted img_dir)
+        img_dir: str — directory of generated PNG images
+        save_dir: str — directory to save intermediate results
+        config: OmegaConf config object
+        num_samples: number of line samples for geometric reward
+        min_length: minimum line length threshold
+        threshold_c: algebraic intersection threshold
+        only_raw_scores: if True, skip history-based normalisation (used during FK resampling)
+
+    Returns:
+        sum_scores: torch.Tensor (N,) — z-score normalised advantages for training
+        metrics:    dict            — logging statistics
+        R:          torch.Tensor (N,) — raw scalar rewards per image
+    """
+    
+
+    reward_calculator = ImageGeometricReward(min_length=min_length)
+
+    eval_list = sorted(os.listdir(img_dir))
+
+    raw_rewards = []
+    for img_name in eval_list:
+        img_path = os.path.join(img_dir, img_name)
+        try:
+            # Load as HxWx3 uint8 numpy array (what ImageGeometricReward expects)
+            image = np.array(Image.open(img_path).convert("RGB"))
+            reward = reward_calculator.get_algebraic_intersection_reward(
+                image, num_samples=num_samples, threshold_c=threshold_c
+            )
+        except Exception:
+            reward = 0.0
+        raw_rewards.append(float(reward))
+
+    R = torch.tensor(raw_rewards, dtype=torch.float32)
+
+    if only_raw_scores:
+        return R, {}, R
+
+    # ---- history-based per-prompt z-score normalisation (mirrors score_fn1) ----
+    unique_id = config.exp_name
+    os.makedirs(os.path.join(save_dir, 'eval'), exist_ok=True)
+    with open(os.path.join(save_dir, 'eval', 'geometric_scores.pkl'), 'wb') as f:
+        pickle.dump(R, f)
+
+    # Organise by prompt
+    each_score = {}
+    for idx, prompt in enumerate(ground):
+        each_score.setdefault(prompt, []).append(R[idx:idx + 1])
+
+    # Load and update history
+    history_data = []
+    if config.eval.history_cnt > 0:
+        history_path = os.path.join(config.save_path, unique_id, 'history_geometric_scores.pkl')
+        if os.path.exists(history_path):
+            with open(history_path, 'rb') as f:
+                history_data = pickle.load(f)
+        if len(history_data) > config.eval.history_cnt:
+            history_data = history_data[-config.eval.history_cnt:]
+
+    data_mean, data_std, cur_data, combine_data = {}, {}, {}, {}
+    for k, v in each_score.items():
+        cur_data[k] = torch.cat(v, dim=0)
+        combine_data[k] = torch.cat(
+            [d[k] for d in history_data if k in d] + [cur_data[k]], dim=0
+        )
+        data_mean[k] = combine_data[k].mean().item()
+        data_std[k] = combine_data[k].std().item()
+
+    history_data.append(cur_data)
+    if len(history_data) > config.eval.history_cnt:
+        history_data = history_data[-config.eval.history_cnt:]
+    with open(os.path.join(config.save_path, unique_id, 'history_geometric_scores.pkl'), 'wb') as f:
+        pickle.dump(history_data, f)
+
+    if config.sample.normalize_all:
+        overall_mean = R.mean().item()
+        overall_std = R.std().item()
+        sum_scores = [(s - overall_mean) / (overall_std + 1e-8) for s in R]
+    else:
+        sum_scores = [
+            (s - data_mean[ground[idx]]) / (data_std[ground[idx]] + 1e-8)
+            for idx, s in enumerate(R)
+        ]
+    sum_scores = torch.tensor(sum_scores)
+
+    metrics = {
+        'raw_scores_mean': float(R.mean()),
+        'raw_scores_std': float(R.std()),
+        'raw_scores_min': float(R.min()),
+        'raw_scores_max': float(R.max()),
+        'normalized_scores_mean': float(sum_scores.mean()),
+        'normalized_scores_std': float(sum_scores.std()),
+        'num_prompts': len(data_mean),
+    }
+    for prompt, mean_val in data_mean.items():
+        prompt_key = prompt[:50].replace(' ', '_')
+        metrics[f'prompt_mean/{prompt_key}'] = mean_val
+        metrics[f'prompt_std/{prompt_key}'] = data_std[prompt]
+
+    return sum_scores, metrics, R
+
+
 def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     """
     Run the selection phase for a given stage.
@@ -202,9 +315,17 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     with open(os.path.join(save_dir, 'prompt.json'), 'r') as f:
         ground = json.load(f)
     
-    # Evaluate scores
+    # Evaluate scores — pick reward function from config
     img_dir = os.path.join(save_dir, 'images')
-    eval_scores, score_metrics, raw_clip_scores = score_fn1(ground, img_dir, save_dir, config, only_raw_scores=False)
+    reward_fn_name = getattr(config, 'reward_fn', 'clip')
+    if reward_fn_name == 'geometric':
+        eval_scores, score_metrics, raw_clip_scores = geometric_algebraic_score_fn(
+            ground, img_dir, save_dir, config, only_raw_scores=False
+        )
+    else:
+        eval_scores, score_metrics, raw_clip_scores = score_fn1(
+            ground, img_dir, save_dir, config, only_raw_scores=False
+        )
     print(f"{raw_clip_scores=}, dtype of eval score tensor: {eval_scores.dtype}")
     print(f"{eval_scores=}")
     samples['eval_scores'] = eval_scores  # Normalized scores for training

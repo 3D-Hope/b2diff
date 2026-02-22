@@ -31,6 +31,7 @@ split_time: 3
 prompt: ""
 prompt_file: "configs/prompt/template1_train.json"
 prompt_random_choose: 1
+reward_fn: "clip"
 
 # Pretrained model
 pretrained:
