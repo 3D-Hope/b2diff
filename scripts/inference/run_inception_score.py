@@ -415,8 +415,10 @@ if __name__ == "__main__":
     parser.add_argument(
         '--img_dir',
         type=str,
-        help='Directory containing images'
+        help='Directory containing images',
+        required=True
     )
     
     args = parser.parse_args()
+    print(f"Calculating Inception Score for images in: {args.img_dir}")
     get_inception_score(args.img_dir)
