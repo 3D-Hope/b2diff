@@ -131,7 +131,7 @@ fi
 echo "Inference started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="incremental_branch_lambda_2_fk_4particles"
+run_name="b2diffu_try2"
 
 echo "Looking for stages in model/lora/${run_name}..."
 
