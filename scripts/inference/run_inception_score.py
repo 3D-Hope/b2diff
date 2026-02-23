@@ -19,6 +19,7 @@ from scipy.stats import entropy
 from diffusers import StableDiffusionPipeline, DDIMScheduler
 from diffusers.models.attention_processor import LoRAAttnProcessor
 from tqdm import tqdm
+import argparse
 
 # Add project root to path for imports
 script_path = os.path.abspath(__file__)
@@ -408,6 +409,14 @@ def get_inception_score(image_dir):
 #         # Compute IS on existing images
 #         main(args.image_dir)
 
+
 if __name__ == "__main__":
-    img_dir = "/home/pramish_paudel/codes/b2diff/tmp"
-    get_inception_score(img_dir)
+    parser = argparse.ArgumentParser(description='Calculate Inception Score for images')
+    parser.add_argument(
+        '--img_dir',
+        type=str,
+        help='Directory containing images'
+    )
+    
+    args = parser.parse_args()
+    get_inception_score(args.img_dir)
