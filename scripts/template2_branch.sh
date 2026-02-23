@@ -171,7 +171,7 @@ python3 ./scripts/training/train_pipeline.py \
     sample.fk=false \
     seed=42 \
     split_time=3 \
-    sample.batch_size=12 \
+    sample.batch_size=16 \
     train.batch_size=16 \
     sample.num_batches_per_epoch=16 \
     train.learning_rate=3e-4 \

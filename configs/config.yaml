@@ -65,7 +65,7 @@ sample:
   fk_then_branch_at: -1
 # Training configuration
 train:
-  batch_size: 8
+  batch_size: 16
   use_8bit_adam: false
   learning_rate: 3e-4 # 0.0001 in b2 but 3e-4 in ddpo
   adam_beta1: 0.9
