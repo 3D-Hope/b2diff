@@ -93,7 +93,7 @@ train:
   num_stages_per_increment: 10
   # progressive_incremental_training: true # incremental training with fixed uniformly spread timesteps in each loop
   score_fn_training: false # whether to train the score function or not
-  bpt: "custom" # "custom" / anything else for default b2 paper's
+  bpt: "default" # "custom" / anything else for default b2 paper's
   only_last_n_steps: -1 # if > 0, only train the last n steps
 
 
