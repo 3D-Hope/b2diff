@@ -131,7 +131,7 @@ fi
 echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="only_10_branch_lambda_2_fk_4particles"
+run_name=" incremental_branch_lambda_2_fk_4particles/"
 stage_number=37
 python3 ./scripts/inference/inference_lora_clip_reward.py \
 --checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/${run_name}/stage${stage_number}/checkpoints/checkpoint_1/ \
