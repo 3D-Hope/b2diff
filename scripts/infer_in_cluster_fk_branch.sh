@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=infer_in_cluster_incremental_branch_lambda_2_fk_4particles
+#SBATCH --job-name=infer_in_cluster_fk_branch_meet
 #SBATCH --partition=batch
 #SBATCH --constraint=zone-msp3
 #SBATCH --gpus=h200:1
