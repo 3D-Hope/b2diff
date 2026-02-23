@@ -173,7 +173,8 @@ python3 ./scripts/training/train_pipeline.py \
     sample.num_batches_per_epoch=16 \
     train.learning_rate=3e-4 \
     train.max_grad_norm=0.005 \
-    prompt_file=configs/prompt/template4_train.json
+    prompt_file=configs/prompt/template4_train.json \
+    reward_fn=geometric
 
 # Only 
 # train.only_train_steps=10

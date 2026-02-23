@@ -179,7 +179,9 @@ python3 ./scripts/training/train_pipeline.py \
     sample.no_selection=true \
     train.incremental_timesteps=[4,8,12,16] \
     train.num_stages_per_increment=10 \
-    prompt_file=configs/prompt/template4_train.json
+    prompt_file=configs/prompt/template4_train.json \
+    reward_fn=geometric
+
 
 # ------------------------------------------------------------------------------
 # Timing summary
