@@ -63,6 +63,7 @@ sample:
   brach_at_before_fk: -1
   always_branch_at: -1
   fk_then_branch_at: -1
+  save_train_samples_no_train: false # whether to save the samples generated in the sampling stage without training or not (for visualization)
 # Training configuration
 train:
   batch_size: 16

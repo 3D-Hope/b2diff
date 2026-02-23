@@ -332,26 +332,29 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     
     
     #     # Calculate mean rewards per prompt and save to JSON
-    # all_scores_list = [float(score) for score in raw_clip_scores]
-    
-    # mean_rewards_summary = {
-    #     "clip_reward_mean": float(raw_clip_scores.mean()),
-    #     "clip_reward_std": float(raw_clip_scores.std()),
-    #     "clip_reward_min": float(raw_clip_scores.min()),
-    #     "clip_reward_max": float(raw_clip_scores.max()),
-    #     "all_scores": all_scores_list,
-    #     "prompts": ground
-    # }
-    
-    # # Save to JSON
-    # mean_rewards_path = os.path.join(save_dir, 'mean_rewards_per_prompt.json')
-    # with open(mean_rewards_path, 'w') as f:
-    #     json.dump(mean_rewards_summary, f, indent=2)
-    
-    # if logger:
-    #     logger.info(f"Reward statistics saved to {mean_rewards_path}")
-    # else:
-    #     print(f"Reward statistics saved to {mean_rewards_path}")
+    if config.sample.save_train_samples_no_train:
+        all_scores_list = [float(score) for score in raw_clip_scores]
+        
+        mean_rewards_summary = {
+            "clip_reward_mean": float(raw_clip_scores.mean()),
+            "clip_reward_std": float(raw_clip_scores.std()),
+            "clip_reward_min": float(raw_clip_scores.min()),
+            "clip_reward_max": float(raw_clip_scores.max()),
+            "all_scores": all_scores_list,
+            "prompts": ground
+        }
+        
+        # Save to JSON
+        mean_rewards_path = os.path.join(save_dir, 'clip_rewards.json')
+        with open(mean_rewards_path, 'w') as f:
+            json.dump(mean_rewards_summary, f, indent=2)
+        
+        if logger:
+            logger.info(f"Reward statistics saved to {mean_rewards_path}")
+        else:
+            print(f"Reward statistics saved to {mean_rewards_path}")
+
+        import sys; sys.exit(0)
     
     # Initialize data structure for selected samples
     def get_new_unit():
