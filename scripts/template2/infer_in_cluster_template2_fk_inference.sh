@@ -131,7 +131,7 @@ fi
 
 echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
-run_name="infer_in_cluster_template2_fk_inference"
+run_name="-r "
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
     sample.fk=true \
