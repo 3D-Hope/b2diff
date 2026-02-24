@@ -1,0 +1,215 @@
+#!/bin/bash
+#SBATCH --job-name=uniform_incremental_branch_lambda_2_fk_4particles
+#SBATCH --partition=batch
+#SBATCH --constraint=zone-msp3
+#SBATCH --gpus=h200:1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem-per-cpu=12G
+#SBATCH --time=2-00:00:00
+#SBATCH --output=logs/%x-%j.out
+#SBATCH --error=logs/%x-%j.err
+
+set -euo pipefail
+
+# ------------------------------------------------------------------------------
+# Error handling
+# ------------------------------------------------------------------------------
+trap 'ERR_CODE=$?; echo "❌ Error on line ${LINENO}. Exit code: ${ERR_CODE}" >&2; exit ${ERR_CODE}' ERR
+trap 'echo "🛑 Job interrupted"; exit 130' INT
+
+# ------------------------------------------------------------------------------
+# Basic setup / logging
+# ------------------------------------------------------------------------------
+mkdir -p logs
+
+echo "──────────────────────────────────────────────────────────────────────────────"
+echo "Job started at: $(date)"
+echo "Running on node: $(hostname)"
+echo "Working directory: $(pwd)"
+echo "Job ID: ${SLURM_JOB_ID:-N/A}"
+echo "──────────────────────────────────────────────────────────────────────────────"
+echo ""
+
+export WANDB_ENTITY="pramish-paudel-insait"
+
+# ------------------------------------------------------------------------------
+# STAGE 3: Miniforge / Conda
+# ------------------------------------------------------------------------------
+echo "STAGE 3: Setting up Miniforge (if missing)..."
+
+CONDA_DIR="/scratch/pramish_paudel/tools/miniforge"
+# rm -rf "${CONDA_DIR}"  # Force reinstall for testing
+if [[ ! -d "${CONDA_DIR}" ]]; then
+    echo "Installing Miniforge to ${CONDA_DIR}..."
+    mkdir -p /scratch/pramish_paudel/tools
+    cd /scratch/pramish_paudel/tools
+
+    INSTALLER="Miniforge3-24.11.3-0-Linux-x86_64.sh"
+    wget -q --show-progress \
+        "https://github.com/conda-forge/miniforge/releases/download/24.11.3-0/${INSTALLER}" \
+        -O "${INSTALLER}"
+
+    bash "${INSTALLER}" -b -p "${CONDA_DIR}"
+    rm -f "${INSTALLER}"
+
+    echo "✅ Miniforge installed at ${CONDA_DIR}"
+else
+    echo "✅ Miniforge already exists at ${CONDA_DIR}"
+fi
+
+# Source conda
+if [[ -f "${CONDA_DIR}/etc/profile.d/conda.sh" ]]; then
+    source "${CONDA_DIR}/etc/profile.d/conda.sh"
+else
+    echo "❌ conda.sh not found"
+    exit 1
+fi
+
+eval "$("${CONDA_DIR}/bin/conda" shell.bash hook)"
+
+# ------------------------------------------------------------------------------
+# STAGE 4: Conda env
+# ------------------------------------------------------------------------------
+echo "STAGE 4: Creating / activating conda env"
+
+CONDA_ENV_NAME="b2"
+DESIRED_PY="3.10"
+
+if ! conda env list | awk '{print $1}' | grep -qx "${CONDA_ENV_NAME}"; then
+    conda create -n "${CONDA_ENV_NAME}" python="${DESIRED_PY}" -y
+fi
+
+conda activate "${CONDA_ENV_NAME}"
+
+export PATH="${CONDA_PREFIX}/bin:${PATH}"
+hash -r
+
+echo "Environment verification:"
+which conda 
+which python
+python --version
+which pip
+echo ""
+
+# ------------------------------------------------------------------------------
+# STAGE 5: pip install
+# ------------------------------------------------------------------------------
+echo "STAGE 5: Installing Python dependencies"
+
+cd /home/pramish_paudel/codes/b2diff
+
+# pip install --upgrade setuptools pip
+
+pip install uv==0.9.26
+
+
+
+
+uv pip install -r requirements.txt || {
+    echo "❌ Dependency installation failed"
+    exit 1
+}
+pip uninstall setuptools -y
+pip install setuptools==80.9.0
+
+# ------------------------------------------------------------------------------
+# STAGE 9: GPU check
+# ------------------------------------------------------------------------------
+echo "STAGE 9: GPU check"
+nvidia-smi || echo "⚠️ nvidia-smi unavailable"
+
+# ------------------------------------------------------------------------------
+# STAGE 10: Training
+# ------------------------------------------------------------------------------
+echo "STAGE 10: Starting training"
+
+export PYTHONUNBUFFERED=1
+export DISPLAY=:0
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True 
+
+START_TIME=$(date +%s)
+START_TIME_READABLE=$(date '+%Y-%m-%d %H:%M:%S')
+
+if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    NUM_GPUS=$(echo "${CUDA_VISIBLE_DEVICES}" | tr ',' '\n' | wc -l)
+else
+    NUM_GPUS=$(nvidia-smi --list-gpus | wc -l || echo 1)
+fi
+
+echo "Training started at: ${START_TIME_READABLE}"
+echo "GPUs detected: ${NUM_GPUS}"
+
+# run_name="fk_b2_all_step_score_fn_rl"
+# # sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward if boest_only_fk is false else only 4 particles for best reward only no worst
+# # batch size for sampling 12 for only best and 6 for both best and worst
+# python3 ./scripts/training/train_pipeline.py \
+#     exp_name="${run_name}" \
+#     train.incremental_training=true \
+#     train.score_fn_training=true \
+#     sample.fk=true \
+#     sample.only_best_fk=true \
+#     sample.fk_mix_ratio=1 \
+#     seed=42 \
+#     sample.no_branching=false \
+#     sample.no_selection=false \
+#     split_time=4 \
+#     sample.batch_size=12 \
+#     train.batch_size=16 \
+#     sample.num_batches_per_epoch=1
+#     pipeline.stage_cnt=1500
+    # pipeline.continue_from_stage=110 \
+    # resume_id="tg2dp40a" \
+
+run_name="uniform_incremental_branch_lambda_2_fk_4particles"
+# sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward if boest_only_fk is false else only 4 particles for best reward only no worst
+# batch size for sampling 12 for only best and 6 for both best and worst
+python3 ./scripts/training/train_pipeline.py \
+    exp_name="${run_name}" \
+    train.incremental_training=true \
+    train.score_fn_training=false \
+    sample.fk=true \
+    sample.normalize_all=false \
+    sample.num_particles=4 \
+    sample.only_best_fk=true \
+    sample.fk_mix_ratio=1 \
+    sample.potential_type="max" \
+    sample.fk_lambda=2.0 \
+    sample.resample_frequency=4 \
+    sample.resampling_t_start=8 \
+    sample.resampling_t_end=16 \
+    sample.brach_at_before_fk=5 \
+    seed=42 \
+    sample.no_branching=false \
+    sample.no_selection=false \
+    split_time=2 \
+    sample.batch_size=12 \
+    train.batch_size=16 \
+    sample.num_batches_per_epoch=16 \
+    train.learning_rate=3e-4 \
+    train.max_grad_norm=0.005 \
+    train.incremental_timesteps=[5,10,15] \
+    train.num_stages_per_increment=10 \
+    train.uniformly_sample_timesteps=true \
+    # train.eps=1e-6
+    # pipeline.stage_cnt=1500
+
+# ------------------------------------------------------------------------------
+# Timing summary
+# ------------------------------------------------------------------------------
+END_TIME=$(date +%s)
+ELAPSED_SECONDS=$((END_TIME - START_TIME))
+ELAPSED_HOURS=$(awk "BEGIN {printf \"%.4f\", ${ELAPSED_SECONDS}/3600}")
+GPU_HOURS=$(awk "BEGIN {printf \"%.4f\", ${ELAPSED_HOURS}*${NUM_GPUS}}")
+
+TIMING_LOG="logs/${ExpName}_timing.txt"
+
+{
+echo "Experiment: ${ExpName}"
+echo "Start time: ${START_TIME_READABLE}"
+echo "End time:   $(date '+%Y-%m-%d %H:%M:%S')"
+echo "GPUs used:  ${NUM_GPUS}"
+echo "Wall time:  ${ELAPSED_SECONDS}s"
+echo "GPU hours:  ${GPU_HOURS}"
+} > "${TIMING_LOG}"
+
+echo "✅ Training completed successfully"
