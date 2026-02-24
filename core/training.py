@@ -204,6 +204,23 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     LossRecord = []
     GradRecord = []
     
+    # Filter trajectories to only include specified timesteps for uniformly_sample_timesteps
+    if config.train.uniformly_sample_timesteps and training_timesteps is not None:
+        if external_logger and accelerator.is_local_main_process:
+            external_logger.info(f"Filtering trajectories to timesteps: {training_timesteps}")
+        
+        # Convert training_timesteps to tensor indices if needed
+        if isinstance(training_timesteps, list):
+            timestep_indices = torch.tensor(training_timesteps, dtype=torch.long)
+        else:
+            timestep_indices = training_timesteps
+        
+        # Filter trajectory data to only keep selected timesteps
+        for key in ["latents", "next_latents", "log_probs", "timesteps"]:
+            if key in samples:
+                # samples[key] has shape [batch_size, num_timesteps, ...]
+                # We want to keep only the timesteps at the specified indices
+                samples[key] = samples[key][:, timestep_indices]
     # Training loop
     for epoch in range(config.train.num_epochs):
         # Shuffle samples along batch dimension
@@ -217,24 +234,7 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
             print(f"{k}: {v.shape}")
         samples = {k: v[perm] for k, v in init_samples.items()}
         
-        # Filter trajectories to only include specified timesteps for progressive training
-        # print(f"shape of timesteps: {samples['timesteps'].shape}, indices of timesteps: {training_timesteps}")
-        # if config.train.progressive_incremental_training and training_timesteps is not None:
-        #     if external_logger and accelerator.is_local_main_process:
-        #         external_logger.info(f"Filtering trajectories to timesteps: {training_timesteps}")
-            
-        #     # Convert training_timesteps to tensor indices if needed
-        #     if isinstance(training_timesteps, list):
-        #         timestep_indices = torch.tensor(training_timesteps, dtype=torch.long)
-        #     else:
-        #         timestep_indices = training_timesteps
-            
-        #     # Filter trajectory data to only keep selected timesteps
-        #     for key in ["latents", "next_latents", "log_probs", "timesteps"]:
-        #         if key in samples:
-        #             # samples[key] has shape [batch_size, num_timesteps, ...]
-        #             # We want to keep only the timesteps at the specified indices
-        #             samples[key] = samples[key][:, timestep_indices]
+        
         
         # Shuffle timesteps (always shuffle, even for progressive training)
         current_num_timesteps = samples["timesteps"].shape[1]
