@@ -190,7 +190,9 @@ python3 ./scripts/training/train_pipeline.py \
     train.max_grad_norm=0.005 \
     train.incremental_timesteps=[4,8,12,16] \
     train.num_stages_per_increment=10 \
-    prompt_file=configs/prompt/template2_train.json
+    prompt_file=configs/prompt/template2_train.json \
+    resume_id="g23v693t" \
+    pipeline.continue_from_stage=79
 
 
 
