@@ -137,6 +137,7 @@ stage_number=53
 python3 ./scripts/inference/inference_lora_clip_reward.py \
 --checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/${run_name}/stage${stage_number}/checkpoints/checkpoint_1/ \
 --output_dir ./outputs/${run_name}/stage${stage_number} \
+--prompt_file configs/prompt/template2_train.json \
 --num_images 1080 \
 --batch_size 32
 
