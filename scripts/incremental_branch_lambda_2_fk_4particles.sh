@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=incremental_branch_lambda_2_fk_4particles
 #SBATCH --partition=batch
-#SBATCH --constraint=zone-msp3
+#SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
@@ -190,7 +190,7 @@ python3 ./scripts/training/train_pipeline.py \
     train.incremental_timesteps=[5,10,15] \
     train.num_stages_per_increment=10 \
     resume_id="8ws8ldwy" \
-    pipeline.continue_from_stage=55
+    pipeline.continue_from_stage=75
     # train.eps=1e-6
     # pipeline.stage_cnt=1500
 
