@@ -316,6 +316,15 @@ def main(argv):
             "scene (mirrors the overfit_test mode in ashok_train.py)."
         )
     )
+    parser.add_argument(
+        "--lora",
+        default=None,
+        help=(
+            "Path to LoRA weights (.pt file). If provided, LoRA adapters are applied "
+            "to the baseline model and these weights are loaded. If not provided, "
+            "only the baseline model weights are used."
+        )
+    )
 
     args = parser.parse_args(argv)
 
@@ -383,13 +392,38 @@ def main(argv):
     ))
     print(encoded_dataset.class_labels)
 
-    # build model and load weights
+    # build model and load baseline weights
     network = SceneDiffuserMiDiffusion()
     state = torch.load(args.weight_file, map_location=device)
     network.load_state_dict(state)
     network.to(device)
+    print("Loaded baseline weights from", args.weight_file)
+
+    # optionally apply LoRA and load LoRA weights
+    if args.lora is not None:
+        try:
+            from peft import LoraConfig, get_peft_model
+        except ImportError:
+            raise ImportError("peft is required for LoRA support. Install with: pip install peft")
+
+        # Apply LoRA config (matching train_pipeline.py)
+        lora_config = LoraConfig(
+            r=4,
+            lora_alpha=4,
+            target_modules=["q_proj", "k_proj", "v_proj", "out_proj"],
+            lora_dropout=0.0,
+            bias="none",
+        )
+        network = get_peft_model(network, lora_config)
+        
+        # Load LoRA weights
+        lora_state = torch.load(args.lora, map_location=device)
+        network.load_state_dict(lora_state, strict=False)
+        network.to(device)
+        print("Loaded LoRA weights from", args.lora)
+    
     network.eval()
-    print("Loaded weights from", args.weight_file)
+    print("Model ready for inference")
 
     # --overfit_test: grab first training sample's floor plan
     overfit_sample = None

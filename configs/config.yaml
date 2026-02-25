@@ -34,7 +34,7 @@ prompt_random_choose: 1
 reward_fn: "clip"
 
 # Model Selection: 2D (Stable Diffusion) vs 3D (MiDiffusion)
-3d_scene_layout: false  # Set to true to use MiDiffusion for 3D scene generation
+threed_scene_layout: false  # Set to true to use MiDiffusion for 3D scene generation
 
 # Pretrained model (2D - Stable Diffusion)
 pretrained:
@@ -45,8 +45,9 @@ pretrained:
 # Only used when 3d_scene_layout: true
 midiffusion:
   # Paths
+  floor_conditions: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/room_features.json"
   config_path: "3d_layout_generation/MiDiffusion/config.yaml"
-  checkpoint_path: "3d_layout_generation/MiDiffusion/model.pt"
+  checkpoint_path: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/output/log/pretrained_3d_layout_custom_attn/model_06000"
   dataset_directory: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/steerable-scene-generation/MiData/bedroom"
   annotation_file: "bedroom_threed_front_splits.csv"
   

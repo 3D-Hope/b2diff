@@ -173,7 +173,7 @@ def adjust_learning_rate(lr_schedules, optimizer, epoch):
 def schedule_factory(config):
     """Based on the provided config create the suitable learning schedule."""
     schedule = config.get("schedule", "lambda")
-
+    print(f"ashok schedule: {schedule}")
     # Set up LearningRateSchedule
     if schedule == "step" or schedule == "Step":
         lr_schedule = StepLearningRateSchedule({

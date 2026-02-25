@@ -18,6 +18,221 @@ from core.utils.geometric_rewards import ImageGeometricReward
 
 tqdm = partial(tqdm_lib, dynamic_ncols=True)
 
+def compute_aabb_penetration_depth(centers1, sizes1, centers2, sizes2):
+    """
+    Compute penetration depth between two sets of AABBs.
+
+    Penetration depth is defined as the minimum translation distance needed to
+    separate two overlapping objects. For AABBs, this is the minimum overlap
+    across all axes.
+
+    Args:
+        centers1: (B, N1, 3) - centers of first set of boxes
+        sizes1: (B, N1, 3) - sizes of first set of boxes
+        centers2: (B, N2, 3) - centers of second set of boxes
+        sizes2: (B, N2, 3) - sizes of second set of boxes
+
+    Returns:
+        penetration_depth: (B, N1, N2) - penetration depth (0 if no overlap)
+    """
+    batch_size = centers1.shape[0]
+    device = centers1.device
+
+    # Expand dimensions for pairwise comparison
+    c1 = centers1.unsqueeze(2)  # (B, N1, 1, 3)
+    s1 = sizes1.unsqueeze(2)  # (B, N1, 1, 3)
+    c2 = centers2.unsqueeze(1)  # (B, 1, N2, 3)
+    s2 = sizes2.unsqueeze(1)  # (B, 1, N2, 3)
+
+    # NOTE: sizes are already half-extents (sx/2, sy/2, sz/2)
+    # So we use them directly
+    half1 = s1  # (B, N1, 1, 3) - already half-extents
+    half2 = s2  # (B, 1, N2, 3) - already half-extents
+
+    # Compute center distance for each axis
+    center_dist = torch.abs(c1 - c2)  # (B, N1, N2, 3)
+
+    # Compute sum of half-extents for each axis
+    sum_half_extents = half1 + half2  # (B, N1, N2, 3)
+
+    # Overlap on each axis = sum_of_half_extents - center_distance
+    # If positive, there's overlap; if negative or zero, no overlap
+    overlap_per_axis = sum_half_extents - center_dist  # (B, N1, N2, 3)
+
+    # For AABBs to overlap, they must overlap on ALL axes
+    # Check if overlapping on all axes
+    is_overlapping_all_axes = (overlap_per_axis > 0).all(dim=3)  # (B, N1, N2)
+
+    # Penetration depth is the MINIMUM overlap across all axes
+    # (the smallest amount needed to separate the objects)
+    min_overlap_per_pair = overlap_per_axis.min(dim=3)[0]  # (B, N1, N2)
+
+    # Only consider penetration where objects actually overlap on all axes
+    penetration_depth = torch.where(
+        is_overlapping_all_axes,
+        min_overlap_per_pair,
+        torch.zeros_like(min_overlap_per_pair),
+    )
+
+    # Clamp to ensure non-negative
+    penetration_depth = torch.clamp(penetration_depth, min=0.0)
+
+    return penetration_depth
+
+
+def compute_non_penetration_reward(parsed_scenes, **kwargs):
+    """
+    Calculate reward based on non-penetration constraint using penetration depth.
+
+    Following the approach from original authors: reward = sum of negative signed distances.
+    When objects overlap, we get positive penetration depth, so reward is negative.
+
+    Args:
+        parsed_scenes: Dict returned by parse_and_descale_scenes()
+
+    Returns:
+        rewards: Tensor of shape (B,) with non-penetration rewards for each scene
+    """
+    room_type = kwargs["room_type"]
+    positions = parsed_scenes["positions"]
+    sizes = parsed_scenes["sizes"]
+    object_indices = parsed_scenes["object_indices"]
+    is_empty = parsed_scenes["is_empty"]
+    batch_size = positions.shape[0]
+    device = positions.device
+    
+    # print(f"Parsed scene: pos {positions[:10]} sizes: {sizes[:10]}")
+    # print(f"Parsed scene: {parsed_scenes}")
+
+    # Identify ceiling objects (they don't participate in ground-level collisions)
+    ceiling_objects = ["ceiling_lamp", "pendant_lamp"]
+    idx_to_labels_bedroom = {
+        0: "armchair",
+        1: "bookshelf",
+        2: "cabinet",
+        3: "ceiling_lamp",
+        4: "chair",
+        5: "children_cabinet",
+        6: "coffee_table",
+        7: "desk",
+        8: "double_bed",
+        9: "dressing_chair",
+        10: "dressing_table",
+        11: "kids_bed",
+        12: "nightstand",
+        13: "pendant_lamp",
+        14: "shelf",
+        15: "single_bed",
+        16: "sofa",
+        17: "stool",
+        18: "table",
+        19: "tv_stand",
+        20: "wardrobe",
+    }
+    ceiling_indices = [
+        idx for idx, label in idx_to_labels_bedroom.items() if label in ceiling_objects
+    ]
+    is_ceiling = torch.zeros_like(is_empty, dtype=torch.bool)
+    for ceiling_idx in ceiling_indices:
+        is_ceiling |= object_indices == ceiling_idx
+
+    # Create mask for ground objects (non-empty, non-ceiling)
+    is_ground_object = ~is_empty & ~is_ceiling
+
+    # Compute pairwise penetration depths
+    penetration_depth = compute_aabb_penetration_depth(
+        positions, sizes, positions, sizes
+    )  # (B, N, N)
+
+    # Create mask to ignore self-overlaps (diagonal), empty objects, and ceiling objects
+    mask = is_ground_object.unsqueeze(2) & is_ground_object.unsqueeze(1)  # (B, N, N)
+
+    # Remove self-overlaps (diagonal)
+    eye = torch.eye(positions.shape[1], device=device, dtype=torch.bool)
+    eye = eye.unsqueeze(0).expand(batch_size, -1, -1)  # (B, N, N)
+    mask = mask & ~eye
+
+    # Apply mask to penetration depths
+    masked_penetration = torch.where(
+        mask, penetration_depth, torch.zeros_like(penetration_depth)
+    )
+
+    # Sum total penetration depth per scene
+    # Divide by 2 because each pair is counted twice (i,j) and (j,i)
+    total_penetration = masked_penetration.sum(dim=[1, 2]) / 2.0  # (B,)
+
+    # Convert to reward: +1 if no penetration, else -penetration_depth
+    # This provides a clear positive signal for valid scenes and negative for invalid ones
+    rewards = torch.where(
+        total_penetration == 0,
+        torch.ones_like(total_penetration),
+        -total_penetration
+    )
+    return rewards
+
+
+
+def threed_score_fn(x0_raw, save_dir, config, only_raw_scores=True):
+    """Non-penetration reward for a batch of denoised 3D scenes, with history-based
+    global z-score normalisation mirroring score_fn1.
+
+    Args:
+        x0_raw       : (B, N, C) final denoised scene tensor (on any device)
+        save_dir     : stage save directory
+        config       : OmegaConf config (needs config.midiffusion.room_type / num_classes)
+        only_raw_scores: if True, skip history normalisation (FK resampling)
+
+    Returns:
+        eval_scores (B,), metrics dict, R (B,) raw rewards
+    """
+    from core.sampling import parse_and_descale_scenes
+
+    unique_id   = config.exp_name
+    room_type   = getattr(config.midiffusion, 'room_type',   'livingroom')
+    num_classes = getattr(config.midiffusion, 'num_classes', 22)
+
+    parsed = parse_and_descale_scenes(x0_raw, num_classes=num_classes, room_type=room_type)
+    R = compute_non_penetration_reward(parsed, room_type=room_type).cpu()  # (B,)
+
+    if only_raw_scores:
+        return R, {}, R
+
+    os.makedirs(os.path.join(save_dir, 'eval'), exist_ok=True)
+    with open(os.path.join(save_dir, 'eval', 'penetration_scores.pkl'), 'wb') as f:
+        pickle.dump(R, f)
+
+    # History-based global z-score normalisation
+    history_data = []
+    if config.eval.history_cnt > 0:
+        history_path = os.path.join(config.save_path, unique_id, 'history_3d_scores.pkl')
+        if os.path.exists(history_path):
+            with open(history_path, 'rb') as f:
+                history_data = pickle.load(f)
+        if len(history_data) > config.eval.history_cnt:
+            history_data = history_data[-config.eval.history_cnt:]
+
+    combined    = torch.cat(history_data + [R]) if history_data else R
+    global_mean = combined.mean().item()
+    global_std  = combined.std().item()
+
+    history_data.append(R)
+    if len(history_data) > config.eval.history_cnt:
+        history_data = history_data[-config.eval.history_cnt:]
+    with open(os.path.join(config.save_path, unique_id, 'history_3d_scores.pkl'), 'wb') as f:
+        pickle.dump(history_data, f)
+
+    eval_scores = torch.tensor([(s - global_mean) / (global_std + 1e-8) for s in R]) # NOTE: this is sensible because we are not doing prompt wise alignment here, collision is similar across floor conditions
+
+    metrics = {
+        'raw_scores_mean':        float(R.mean()),
+        'raw_scores_std':         float(R.std()),
+        'raw_scores_min':         float(R.min()),
+        'raw_scores_max':         float(R.max()),
+        'normalized_scores_mean': float(eval_scores.mean()),
+        'normalized_scores_std':  float(eval_scores.std()),
+    }
+    return eval_scores, metrics, R
+
 
 def score_fn1(ground, img_dir, save_dir, config, clip_model=None, clip_preprocess=None, clip_tokenizer=None, only_raw_scores=True):
     """
@@ -283,6 +498,7 @@ def geometric_algebraic_score_fn(ground, img_dir, save_dir, config,
     return sum_scores, metrics, R
 
 
+
 def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     """
     Run the selection phase for a given stage.
@@ -309,250 +525,232 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
     stage_id = f"stage{stage_idx}"
     save_dir = os.path.join(config.save_path, unique_id, stage_id)
     
-    # Load samples and prompts
+    # Load samples
     with open(os.path.join(save_dir, 'sample.pkl'), 'rb') as f:
         samples = pickle.load(f)
-    with open(os.path.join(save_dir, 'prompt.json'), 'r') as f:
-        ground = json.load(f)
-    
-    # Evaluate scores — pick reward function from config
-    img_dir = os.path.join(save_dir, 'images')
-    reward_fn_name = getattr(config, 'reward_fn', 'clip')
-    if reward_fn_name == 'geometric':
-        eval_scores, score_metrics, raw_clip_scores = geometric_algebraic_score_fn(
-            ground, img_dir, save_dir, config, only_raw_scores=False
+
+    threed = getattr(config, 'threed_scene_layout', False)
+
+    if threed:
+        # 3D path: floor condition indices as context, non-penetration reward
+        with open(os.path.join(save_dir, 'fpbpn_list.json'), 'r') as f:
+            ground = json.load(f)
+
+        device  = f"cuda:{config.dev_id}" if torch.cuda.is_available() else "cpu"
+        x0_raw  = samples["next_scenes"][:, -1].to(device)  # (B, N, C) final denoised step
+        eval_scores, score_metrics, raw_scores = threed_score_fn(
+            x0_raw, save_dir, config, only_raw_scores=False
         )
+        _embed_key    = 'fpbpn'
+        _lat_key      = 'scenes'
+        _next_lat_key = 'next_scenes'
+        print(f"3D non-penetration rewards: mean={raw_scores.mean():.4f}, std={raw_scores.std():.4f}")
     else:
-        eval_scores, score_metrics, raw_clip_scores = score_fn1(
-            ground, img_dir, save_dir, config, only_raw_scores=False
-        )
+        # SD path: text prompts, CLIP/geometric reward
+        with open(os.path.join(save_dir, 'prompt.json'), 'r') as f:
+            ground = json.load(f)
+
+        img_dir        = os.path.join(save_dir, 'images')
+        reward_fn_name = getattr(config, 'reward_fn', 'clip')
+        if reward_fn_name == 'geometric':
+            eval_scores, score_metrics, raw_scores = geometric_algebraic_score_fn(
+                ground, img_dir, save_dir, config, only_raw_scores=False
+            )
+        else:
+            eval_scores, score_metrics, raw_scores = score_fn1(
+                ground, img_dir, save_dir, config, only_raw_scores=False
+            )
+        _embed_key    = 'prompt_embeds'
+        _lat_key      = 'latents'
+        _next_lat_key = 'next_latents'
+
+    raw_clip_scores = raw_scores  # alias kept for rest of function
     print(f"{raw_clip_scores=}, dtype of eval score tensor: {eval_scores.dtype}")
     print(f"{eval_scores=}")
     samples['eval_scores'] = eval_scores  # Normalized scores for training
-    
-    
-    #     # Calculate mean rewards per prompt and save to JSON
-    if config.sample.save_train_samples_no_train:
-        all_scores_list = [float(score) for score in raw_clip_scores]
-        
-        mean_rewards_summary = {
-            "clip_reward_mean": float(raw_clip_scores.mean()),
-            "clip_reward_std": float(raw_clip_scores.std()),
-            "clip_reward_min": float(raw_clip_scores.min()),
-            "clip_reward_max": float(raw_clip_scores.max()),
-            "all_scores": all_scores_list,
-            "prompts": ground
-        }
-        
-        # Save to JSON
-        mean_rewards_path = os.path.join(save_dir, 'clip_rewards.json')
-        with open(mean_rewards_path, 'w') as f:
-            json.dump(mean_rewards_summary, f, indent=2)
-        
-        if logger:
-            logger.info(f"Reward statistics saved to {mean_rewards_path}")
-        else:
-            print(f"Reward statistics saved to {mean_rewards_path}")
 
+    if config.sample.save_train_samples_no_train:
+        all_scores_list = [float(s) for s in raw_clip_scores]
+        rewards_key     = 'penetration_reward' if threed else 'clip_reward'
+        mean_rewards_summary = {
+            f"{rewards_key}_mean": float(raw_clip_scores.mean()),
+            f"{rewards_key}_std":  float(raw_clip_scores.std()),
+            f"{rewards_key}_min":  float(raw_clip_scores.min()),
+            f"{rewards_key}_max":  float(raw_clip_scores.max()),
+            "all_scores": all_scores_list,
+        }
+        rewards_fname = 'penetration_rewards.json' if threed else 'clip_rewards.json'
+        rewards_path  = os.path.join(save_dir, rewards_fname)
+        with open(rewards_path, 'w') as f:
+            json.dump(mean_rewards_summary, f, indent=2)
+        if logger:
+            logger.info(f"Reward statistics saved to {rewards_path}")
+        else:
+            print(f"Reward statistics saved to {rewards_path}")
         import sys; sys.exit(0)
-    
+
     # Initialize data structure for selected samples
     def get_new_unit():
         return {
-            'prompt_embeds': [],
-            'timesteps': [],
-            'log_probs': [],
-            'latents': [],
-            'next_latents': [],
-            'eval_scores': []
+            _embed_key:    [],
+            'timesteps':   [],
+            'log_probs':   [],
+            _lat_key:      [],
+            _next_lat_key: [],
+            'eval_scores': [],
         }
-    
+
     data = get_new_unit()
     if config.sample.no_selection:
-        t_left = 0
+        t_left  = 0
         t_right = config.sample.num_steps
-        # Just save everything
         data = {
-            'prompt_embeds': samples['prompt_embeds'],
-            'timesteps': samples['timesteps'][:, t_left:t_right],
-            'log_probs': samples['log_probs'][:, t_left:t_right],
-            'latents': samples['latents'][:, t_left:t_right],
-            'next_latents': samples['next_latents'][:, t_left:t_right],
-            'eval_scores': samples['eval_scores']
+            _embed_key:    samples[_embed_key],
+            'timesteps':   samples['timesteps'][:, t_left:t_right],
+            'log_probs':   samples['log_probs'][:, t_left:t_right],
+            _lat_key:      samples[_lat_key][:, t_left:t_right],
+            _next_lat_key: samples[_next_lat_key][:, t_left:t_right],
+            'eval_scores': samples['eval_scores'],
         }
-    
-    else:# Select positive and negative samples
+
+    else:  # Select positive and negative samples
         total_batch_size = samples['eval_scores'].shape[0]
-        
-        # Calculate number of particles per prompt for FK mode
+
         if config.sample.fk:
             fk_particles = config.sample.num_particles * (1 if getattr(config.sample, 'only_best_fk', False) else 2)
-            data_size = fk_particles  # All particles for one prompt
-            batch_size = total_batch_size // fk_particles  # Number of prompts
+            data_size    = fk_particles
+            batch_size   = total_batch_size // fk_particles
         else:
-            data_size = total_batch_size // config.sample.batch_size
+            data_size  = total_batch_size // config.sample.batch_size
             batch_size = config.sample.batch_size
-        
+
         for b in range(batch_size):
             cur_sample_num = 1
-            
-            # CRITICAL FIX: For FK mode, extract consecutive chunks (particles from same prompt)
-            # Instead of interleaved extraction
+
             if config.sample.fk:
-                start_idx = b * fk_particles
-                end_idx = start_idx + fk_particles
-                batch_samples = {
-                    k: v[start_idx:end_idx]
-                    for k, v in samples.items()
-                }
+                start_idx     = b * fk_particles
+                end_idx       = start_idx + fk_particles
+                batch_samples = {k: v[start_idx:end_idx] for k, v in samples.items()}
             else:
-                # Original logic for branching mode (interleaved extraction)
                 batch_samples = {
-                    k: v[torch.arange(b, total_batch_size, batch_size)] 
+                    k: v[torch.arange(b, total_batch_size, batch_size)]
                     for k, v in samples.items()
                 }
-            
-            # When incremental training is enabled, keep the full trajectory
-            # Otherwise, preserve original behavior (use last `split_step` timesteps)
-            if (hasattr(config, 'train') and (getattr(config.train, 'incremental_training', False))) or config.sample.fk:
-                t_left = 0
+
+            if (hasattr(config, 'train') and getattr(config.train, 'incremental_training', False)) or config.sample.fk:
+                t_left  = 0
                 t_right = config.sample.num_steps
             else:
-                t_left = config.sample.num_steps - config.split_step
+                t_left  = config.sample.num_steps - config.split_step
                 t_right = config.sample.num_steps
 
             if config.train.only_last_n_steps > 0:
                 t_left = config.sample.num_steps - config.train.only_last_n_steps
 
-            # print(f"{data_size=}, {cur_sample_num=}, {total_batch_size=}")
-            
-            # Extract data for this prompt's particles
-            prompt_embeds = batch_samples['prompt_embeds'][torch.arange(0, data_size, cur_sample_num)]
-            timesteps = batch_samples['timesteps'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
-            log_probs = batch_samples['log_probs'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
-            latents = batch_samples['latents'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
-            next_latents = batch_samples['next_latents'][torch.arange(0, data_size, cur_sample_num), t_left:t_right]
-            
-            score = batch_samples['eval_scores'][torch.arange(0, data_size, cur_sample_num)]
+            idx_sel   = torch.arange(0, data_size, cur_sample_num)
+            embeds    = batch_samples[_embed_key][idx_sel]
+            timesteps = batch_samples['timesteps'][idx_sel, t_left:t_right]
+            log_probs = batch_samples['log_probs'][idx_sel, t_left:t_right]
+            lats      = batch_samples[_lat_key][idx_sel, t_left:t_right]
+            next_lats = batch_samples[_next_lat_key][idx_sel, t_left:t_right]
+
+            score = batch_samples['eval_scores'][idx_sel]
             print(f"Batch {b}: score shape before reshape: {score.shape}")
-            
-            # For FK mode: score already contains all particles for this prompt, no reshape needed
-            # For branching mode: reshape to group branches
+
             if config.sample.fk:
-                # score is already [num_particles * (1 or 2)] for this prompt
-                # Just keep it as 1D for finding max/min across all particles
-                score = score.reshape(1, -1)  # Shape: [1, fk_particles]
+                score = score.reshape(1, -1)
             else:
                 score = score.reshape(-1, config.split_time)
             max_idx = score.argmax(dim=1)
             min_idx = score.argmin(dim=1)
-            
+
             for j, s in enumerate(score):
                 for p_n in range(2):
                     if p_n == 0 and s[max_idx[j]] >= config.eval.pos_threshold:
-                        used_idx = max_idx[j]
-                        # For FK mode: used_idx is directly the particle index (no j multiplier needed)
-                        # For branching mode: need to calculate actual index
-                        if config.sample.fk:
-                            used_idx_2 = used_idx
-                        else:
-                            used_idx_2 = j * config.split_time + used_idx
+                        used_idx   = max_idx[j]
+                        used_idx_2 = used_idx if config.sample.fk else j * config.split_time + used_idx
                     elif p_n == 1 and s[min_idx[j]] < config.eval.neg_threshold:
-                        used_idx = min_idx[j]
-                        if config.sample.fk:
-                            used_idx_2 = used_idx
-                        else:
-                            used_idx_2 = j * config.split_time + used_idx
+                        used_idx   = min_idx[j]
+                        used_idx_2 = used_idx if config.sample.fk else j * config.split_time + used_idx
                     else:
-                        if config.sample.no_selection: # this is to allow all the samples regardless of the score to be in training data in no_branching mode
-                            used_idx = min_idx[j]
-                            if config.sample.fk:
-                                used_idx_2 = used_idx
-                            else:
-                                used_idx_2 = j * config.split_time + used_idx
+                        if config.sample.no_selection:
+                            used_idx   = min_idx[j]
+                            used_idx_2 = used_idx if config.sample.fk else j * config.split_time + used_idx
                         else:
                             continue
-                        # continue
-                    
-                    data['prompt_embeds'].append(prompt_embeds[used_idx_2])
+
+                    data[_embed_key].append(embeds[used_idx_2])
                     data['timesteps'].append(timesteps[used_idx_2])
                     data['log_probs'].append(log_probs[used_idx_2])
-                    data['latents'].append(latents[used_idx_2])
-                    data['next_latents'].append(next_latents[used_idx_2])
+                    data[_lat_key].append(lats[used_idx_2])
+                    data[_next_lat_key].append(next_lats[used_idx_2])
                     data['eval_scores'].append(s[used_idx])
-            
-            # Update cur_sample_num for next iteration (only used in branching mode)
+
             if not config.sample.fk:
                 cur_sample_num *= config.split_time
-    
+
     # Stack data if any samples were selected
-    # if config.sample.fk:
-    #     if logger:
-    #         logger.info(f"Selected {len(data['prompt_embeds'])} samples (FK sampling - all kept)")
-    if len(data['prompt_embeds']) > 0:
-        # Only stack if items are lists (not already tensors)
+    if len(data[_embed_key]) > 0:
         first_value = next(iter(data.values()))
         if isinstance(first_value, list):
             data = {k: torch.stack(v, dim=0) for k, v in data.items()}
-
-        
         if logger:
-            logger.info(f"Selected {len(data['prompt_embeds'])} samples")
+            logger.info(f"Selected {len(data[_embed_key])} samples")
     else:
         if logger:
             logger.warning("No samples met the selection criteria")
         print("Warning: No samples met the selection criteria")
+        # Convert all empty lists to empty tensors so downstream code can call
+        # .shape[0], .dtype, etc. without crashing.
+        data = {k: (torch.stack(v, dim=0) if (isinstance(v, list) and len(v) > 0) else torch.tensor([])) for k, v in data.items()}
+
     # Save selected samples
     with open(os.path.join(save_dir, 'sample_stage.pkl'), 'wb') as f:
         pickle.dump(data, f)
-    
-    # Calculate mean reward of ALL generated samples (before selection)
-    # IMPORTANT: Use raw CLIP scores for reward tracking (not normalized), to match paper's plot
+
     all_samples_mean_reward = float(raw_clip_scores.mean())
-    all_samples_std_reward = float(raw_clip_scores.std())
-    num_reward_queries = len(raw_clip_scores)
-    
-    # Load and update cumulative reward query count
+    all_samples_std_reward  = float(raw_clip_scores.std())
+    num_reward_queries      = len(raw_clip_scores)
+
     cumulative_queries_path = os.path.join(config.save_path, unique_id, 'cumulative_reward_queries.pkl')
     if os.path.exists(cumulative_queries_path):
         with open(cumulative_queries_path, 'rb') as f:
             cumulative_reward_queries = pickle.load(f)
     else:
         cumulative_reward_queries = 0
-    
     cumulative_reward_queries += num_reward_queries
-    
-    # Save updated cumulative count
     with open(cumulative_queries_path, 'wb') as f:
         pickle.dump(cumulative_reward_queries, f)
-    
-    # Prepare clean metrics for aggregation at pipeline level
-    # Return metrics WITHOUT per-stage prefixes - pipeline will handle aggregation
-    print(f"dtype of eval_scores: {data.get('eval_scores', torch.tensor([])).dtype}")
-    num_selected = len(data.get('prompt_embeds', []))
-    num_positive = int((data.get('eval_scores', torch.tensor([])) >= config.eval.pos_threshold).sum()) if len(data.get('eval_scores', [])) > 0 else 0
-    num_negative = int((data.get('eval_scores', torch.tensor([])) < config.eval.neg_threshold).sum()) if len(data.get('eval_scores', [])) > 0 else 0
+
+    print(f"dtype of eval_scores: {data.get('eval_scores', torch.tensor([])).dtype if isinstance(data.get('eval_scores'), torch.Tensor) else 'list (no samples selected)'}")
+    _es_raw = data.get('eval_scores', [])
+    if isinstance(_es_raw, list):
+        _es = torch.stack(_es_raw) if len(_es_raw) > 0 else torch.tensor([])
+    else:
+        _es = _es_raw
+    num_selected  = len(data.get(_embed_key, []))
+    num_positive  = int((_es >= config.eval.pos_threshold).sum()) if len(_es) > 0 else 0
+    num_negative  = int((_es <  config.eval.neg_threshold).sum()) if len(_es) > 0 else 0
     num_generated = len(raw_clip_scores)
-    num_rejected = num_generated - num_selected
-    
+    num_rejected  = num_generated - num_selected
+
     selection_metrics = {
-        # Clean metrics for consolidation
-        "num_selected": num_selected,
-        "num_positive": num_positive,
-        "num_negative": num_negative,
-        "num_generated": num_generated,
-        "num_rejected": num_rejected,
-        "mean_reward": all_samples_mean_reward,
-        "std_reward": all_samples_std_reward,
-        "num_queries": num_reward_queries,
+        "num_selected":       num_selected,
+        "num_positive":       num_positive,
+        "num_negative":       num_negative,
+        "num_generated":      num_generated,
+        "num_rejected":       num_rejected,
+        "mean_reward":        all_samples_mean_reward,
+        "std_reward":         all_samples_std_reward,
+        "num_queries":        num_reward_queries,
         "cumulative_queries": cumulative_reward_queries,
     }
-    
+
     if logger:
         logger.info(f"Selection completed for stage {stage_idx}")
         logger.info(f"Generated: {num_generated}, Selected: {num_selected}, Rejected: {num_rejected}")
         logger.info(f"Positive: {num_positive}, Negative: {num_negative}")
         logger.info(f"Mean reward (all samples): {all_samples_mean_reward:.4f} ± {all_samples_std_reward:.4f}")
         logger.info(f"Cumulative reward queries: {cumulative_reward_queries}")
-    
+
     return save_dir, selection_metrics

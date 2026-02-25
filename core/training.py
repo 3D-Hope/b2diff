@@ -86,7 +86,6 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     # IMPORTANT: Do NOT use log_with="wandb" - prevents separate run creation
     # All logging goes through the parent pipeline's wandb_run
     
-    logger.info(f"\n{config}")
     seed_everything(config.seed)
     
     # Setup inference dtype
@@ -96,35 +95,59 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     elif accelerator.mixed_precision == "bf16":
         inference_dtype = torch.bfloat16
     
-    # Setup save/load hooks for checkpointing (using original pattern)
-    def save_model_hook(models, weights, output_dir):
-        assert len(models) == 1
-        if config.use_lora and isinstance(models[0], AttnProcsLayers):
-            pipeline.unet.save_attn_procs(output_dir)
-        elif not config.use_lora and isinstance(models[0], UNet2DConditionModel):
-            models[0].save_pretrained(os.path.join(output_dir, "unet"))
-        else:
-            raise ValueError(f"Unknown model type {type(models[0])}")
-        weights.pop()
-    
-    def load_model_hook(models, input_dir):
-        assert len(models) == 1
-        if config.use_lora and isinstance(models[0], AttnProcsLayers):
-            tmp_unet = UNet2DConditionModel.from_pretrained(
-                config.pretrained.model, revision=config.pretrained.revision, subfolder="unet"
-            )
-            tmp_unet.load_attn_procs(input_dir)
-            models[0].load_state_dict(AttnProcsLayers(tmp_unet.attn_processors).state_dict())
-            del tmp_unet
-        elif not config.use_lora and isinstance(models[0], UNet2DConditionModel):
-            load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
-            models[0].register_to_config(**load_model.config)
-            models[0].load_state_dict(load_model.state_dict())
-            del load_model
-        else:
-            raise ValueError(f"Unknown model type {type(models[0])}")
-        models.pop()
-    
+    # Setup save/load hooks for checkpointing
+    threed = getattr(config, 'threed_scene_layout', False)
+
+    if threed:
+        def save_model_hook(models, weights, output_dir):
+            assert len(models) == 1
+            if config.use_lora:
+                # Save only the LoRA delta weights
+                import peft
+                lora_state = {k: v for k, v in models[0].state_dict().items() if 'lora_' in k}
+                torch.save(lora_state, os.path.join(output_dir, 'lora_weights.pt'))
+            else:
+                torch.save(models[0].state_dict(), os.path.join(output_dir, 'model.pt'))
+            weights.pop()
+
+        def load_model_hook(models, input_dir):
+            assert len(models) == 1
+            if config.use_lora:
+                lora_state = torch.load(os.path.join(input_dir, 'lora_weights.pt'), map_location='cpu')
+                models[0].load_state_dict(lora_state, strict=False)
+            else:
+                state = torch.load(os.path.join(input_dir, 'model.pt'), map_location='cpu')
+                models[0].load_state_dict(state)
+            models.pop()
+    else:
+        def save_model_hook(models, weights, output_dir):
+            assert len(models) == 1
+            if config.use_lora and isinstance(models[0], AttnProcsLayers):
+                pipeline.unet.save_attn_procs(output_dir)
+            elif not config.use_lora and isinstance(models[0], UNet2DConditionModel):
+                models[0].save_pretrained(os.path.join(output_dir, "unet"))
+            else:
+                raise ValueError(f"Unknown model type {type(models[0])}")
+            weights.pop()
+
+        def load_model_hook(models, input_dir):
+            assert len(models) == 1
+            if config.use_lora and isinstance(models[0], AttnProcsLayers):
+                tmp_unet = UNet2DConditionModel.from_pretrained(
+                    config.pretrained.model, revision=config.pretrained.revision, subfolder="unet"
+                )
+                tmp_unet.load_attn_procs(input_dir)
+                models[0].load_state_dict(AttnProcsLayers(tmp_unet.attn_processors).state_dict())
+                del tmp_unet
+            elif not config.use_lora and isinstance(models[0], UNet2DConditionModel):
+                load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
+                models[0].register_to_config(**load_model.config)
+                models[0].load_state_dict(load_model.state_dict())
+                del load_model
+            else:
+                raise ValueError(f"Unknown model type {type(models[0])}")
+            models.pop()
+
     accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
     
@@ -150,19 +173,23 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         eps=config.train.adam_epsilon,
     )
     
-    # Generate negative prompt embeddings
-    neg_prompt_embed = pipeline.text_encoder(
-        pipeline.tokenizer(
-            [""],
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-            max_length=pipeline.tokenizer.model_max_length,
-        ).input_ids.to(accelerator.device)
-    )[0]
-    
-    autocast = contextlib.nullcontext if config.use_lora else accelerator.autocast
-    
+    if not threed:
+        # 2D SD path: generate negative prompt embeddings for CFG
+        neg_prompt_embed = pipeline.text_encoder(
+            pipeline.tokenizer(
+                [""],
+                return_tensors="pt",
+                padding="max_length",
+                truncation=True,
+                max_length=pipeline.tokenizer.model_max_length,
+            ).input_ids.to(accelerator.device)
+        )[0]
+    # 3D path: no text encoder, no CFG — neg_prompt_embed not needed
+
+    # For 3D (MiDiffusion), always use nullcontext (no mixed-precision autocast needed).
+    # For 2D SD with LoRA, also use nullcontext; otherwise use accelerator.autocast.
+    autocast = contextlib.nullcontext if (threed or config.use_lora) else accelerator.autocast
+
     # Prepare everything with accelerator
     trainable_layers, optimizer = accelerator.prepare(trainable_layers, optimizer)
     
@@ -198,25 +225,58 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     # Load sample data
     samples = load_sample_stage(save_dir)
     accelerator.save_state()
-    
-    pipeline.scheduler.set_timesteps(config.sample.num_steps, device=accelerator.device)
+
+    if threed:
+        # Set up the DDIM scheduler used during sampling so that timesteps match.
+        from diffusers import DDIMScheduler as _DDIMScheduler
+        _ddim_3d = _DDIMScheduler(
+            num_train_timesteps=getattr(config.midiffusion, 'num_timesteps', 1000),
+            beta_start=getattr(config.midiffusion, 'beta_start', 1e-4),
+            beta_end=getattr(config.midiffusion, 'beta_end', 0.02),
+            clip_sample=False,
+            prediction_type="epsilon",
+            steps_offset=1,
+        )
+        _ddim_3d.set_timesteps(config.sample.num_steps, device=accelerator.device)
+    else:
+        pipeline.scheduler.set_timesteps(config.sample.num_steps, device=accelerator.device)
+
     init_samples = copy.deepcopy(samples)
+
+    # Guard: ensure eval_scores is always a tensor (selection.py should guarantee this,
+    # but defend here too in case an old pickle is loaded).
+    _es_raw = init_samples.get("eval_scores", torch.tensor([]))
+    if isinstance(_es_raw, list):
+        _es_raw = torch.stack(_es_raw) if len(_es_raw) > 0 else torch.tensor([])
+        init_samples["eval_scores"] = _es_raw
+    if _es_raw.shape[0] == 0:
+        logger.warning("No training samples available (empty sample_stage.pkl) — skipping training for this stage.")
+        return save_dir
+
     LossRecord = []
     GradRecord = []
     
+    # Key aliases: 3D uses 'scenes'/'next_scenes'; SD uses 'latents'/'next_latents'
+    if threed:
+        _lat_key      = 'scenes'
+        _next_lat_key = 'next_scenes'
+        _embed_key    = 'fpbpn'
+    else:
+        _lat_key      = 'latents'
+        _next_lat_key = 'next_latents'
+        _embed_key    = 'prompt_embeds'
+
     # Filter trajectories to only include specified timesteps for uniformly_sample_timesteps
     if config.train.uniformly_sample_timesteps and training_timesteps is not None:
         if external_logger and accelerator.is_local_main_process:
             external_logger.info(f"Filtering trajectories to timesteps: {training_timesteps}")
-        
-        # Convert training_timesteps to tensor indices if needed
+
         if isinstance(training_timesteps, list):
             timestep_indices = torch.tensor(training_timesteps, dtype=torch.long)
         else:
             timestep_indices = training_timesteps
-        
-        # Filter trajectory data to only keep selected timesteps
-        for key in ["latents", "next_latents", "log_probs", "timesteps"]:
+
+        for key in [_lat_key, _next_lat_key, "log_probs", "timesteps"]:
             if key in samples:
                 # samples[key] has shape [batch_size, num_timesteps, ...]
                 # We want to keep only the timesteps at the specified indices
@@ -230,8 +290,6 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         
         total_batch_size = init_samples["eval_scores"].shape[0]
         perm = torch.randperm(total_batch_size)
-        for k, v in init_samples.items():
-            print(f"{k}: {v.shape}")
         samples = {k: v[perm] for k, v in init_samples.items()}
         
         
@@ -241,11 +299,17 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         perms = torch.stack(
             [torch.randperm(current_num_timesteps) for _ in range(total_batch_size)]
         )
-        for key in ["latents", "next_latents", "log_probs", "timesteps"]:
+        for key in [_lat_key, _next_lat_key, "log_probs", "timesteps"]:
             samples[key] = samples[key][torch.arange(total_batch_size)[:, None], perms]
-        
-        # Training
-        pipeline.unet.train()
+
+        # ---- Set the model to training mode ----
+        if threed:
+            pipeline.model.train()
+            _trainable_module = pipeline.model  # used for accumulate()
+        else:
+            pipeline.unet.train()
+            _trainable_module = pipeline.unet
+
         for idx in tqdm(
             range(0, total_batch_size // 2 * 2, config.train.batch_size),
             desc="Update",
@@ -254,65 +318,77 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         ):
             LossRecord[epoch].append([])
             GradRecord[epoch].append([])
-            
+
             sample = tree.map_structure(lambda value: value[idx:idx + config.train.batch_size].to(accelerator.device), samples)
-            
-            sample_batch_size = sample["prompt_embeds"].shape[0]
-            train_neg_prompt_embeds = neg_prompt_embed.repeat(sample_batch_size, 1, 1)
-            
-            # cfg, classifier-free-guidance
-            if config.train.cfg:
-                embeds = torch.cat([train_neg_prompt_embeds, sample["prompt_embeds"]])
+
+            if threed:
+                fpbpn = sample[_embed_key]  # (B, 256, 4) floor condition
             else:
-                embeds = sample["prompt_embeds"]
-            
-            # For progressive training, we already filtered, so iterate over all remaining timesteps
-            # For regular incremental training, use the specified timestep indices
-            # if config.train.progressive_incremental_training and training_timesteps is not None:
-            #     timestep_indices = range(sample["timesteps"].shape[1])
+                sample_batch_size = sample[_embed_key].shape[0]
+                train_neg_prompt_embeds = neg_prompt_embed.repeat(sample_batch_size, 1, 1)
+                if config.train.cfg:
+                    embeds = torch.cat([train_neg_prompt_embeds, sample[_embed_key]])
+                else:
+                    embeds = sample[_embed_key]
+
             if getattr(config.train, 'incremental_training', False) and training_timesteps is not None:
-                timestep_indices = training_timesteps
+                t_indices = training_timesteps
                 if external_logger and accelerator.is_local_main_process and idx == 0:
-                    external_logger.info(f"Training on {len(timestep_indices)}/{sample['timesteps'].shape[1]} timesteps: {timestep_indices}")
+                    external_logger.info(f"Training on {len(t_indices)}/{sample['timesteps'].shape[1]} timesteps: {t_indices}")
             else:
-                timestep_indices = range(sample["timesteps"].shape[1])
-            
+                t_indices = range(sample["timesteps"].shape[1])
+
             for t in tqdm(
-                timestep_indices,
+                t_indices,
                 desc="Timestep",
                 position=3,
                 leave=False,
                 disable=not accelerator.is_local_main_process,
             ):
                 evaluation_score = sample["eval_scores"][:]
-                
-                with accelerator.accumulate(pipeline.unet):
+
+                with accelerator.accumulate(_trainable_module):
                     with autocast():
-                        if config.train.cfg:
-                            # print(f"timesteps {sample['timesteps'][:, t]}")
-                            noise_pred = pipeline.unet(
-                                torch.cat([sample["latents"][:, t]] * 2),
-                                torch.cat([sample["timesteps"][:, t]] * 2),
-                                embeds,
-                            ).sample
-                            
-                            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                            noise_pred = noise_pred_uncond + config.sample.guidance_scale * (noise_pred_text - noise_pred_uncond)
+                        if threed:
+                            # MiDiffusion: no CFG, predict noise from (x_t, t, fpbpn)
+                            noise_pred = pipeline.predict_noise(
+                                sample[_lat_key][:, t],
+                                sample["timesteps"][:, t],
+                                fpbpn,
+                            )  # (B, N, C)
+                            _, total_prob, _ = ddim_step_with_logprob(
+                                _ddim_3d,
+                                noise_pred,
+                                sample["timesteps"][:, t],
+                                sample[_lat_key][:, t],
+                                eta=getattr(config.sample, 'eta', 0.0),
+                                prev_sample=sample[_next_lat_key][:, t],
+                            )
                         else:
-                            noise_pred = pipeline.unet(
-                                sample["latents"][:, t], sample["timesteps"][:, t], embeds
-                            ).sample
-                        
-                        _, total_prob, _ = ddim_step_with_logprob(
-                            pipeline.scheduler,
-                            noise_pred,
-                            sample["timesteps"][:, t],
-                            sample["latents"][:, t],
-                            eta=config.sample.eta,
-                            prev_sample=sample["next_latents"][:, t],
-                        )
+                            # Stable Diffusion path (with optional CFG)
+                            if config.train.cfg:
+                                noise_pred = pipeline.unet(
+                                    torch.cat([sample[_lat_key][:, t]] * 2),
+                                    torch.cat([sample["timesteps"][:, t]] * 2),
+                                    embeds,
+                                ).sample
+                                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                                noise_pred = noise_pred_uncond + config.sample.guidance_scale * (noise_pred_text - noise_pred_uncond)
+                            else:
+                                noise_pred = pipeline.unet(
+                                    sample[_lat_key][:, t], sample["timesteps"][:, t], embeds
+                                ).sample
+                            _, total_prob, _ = ddim_step_with_logprob(
+                                pipeline.scheduler,
+                                noise_pred,
+                                sample["timesteps"][:, t],
+                                sample[_lat_key][:, t],
+                                eta=config.sample.eta,
+                                prev_sample=sample[_next_lat_key][:, t],
+                            )
+
                         total_ref_prob = sample["log_probs"][:, t]
-                        
+
                         ratio = torch.exp(total_prob - total_ref_prob)
                         temp_beta1 = torch.ones_like(evaluation_score) * config.train.beta1
                         temp_beta2 = torch.ones_like(evaluation_score) * config.train.beta2
@@ -329,44 +405,37 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
                             1.0 + config.train.eps,
                         )
                         loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
-                    
+
                     accelerator.backward(loss)
                     total_norm = None
                     if accelerator.sync_gradients:
-                        total_norm = accelerator.clip_grad_norm_(trainable_layers.parameters(), config.train.max_grad_norm) 
-                        # this is working. returns the grad norm before clipping.
-                    
+                        total_norm = accelerator.clip_grad_norm_(trainable_layers.parameters(), config.train.max_grad_norm)
+
                     loss_value = loss.cpu().item()
                     grad_value = total_norm.cpu().item() if total_norm is not None else None
-                    
-                    # Compute PPO-style metrics
-                    log_prob = total_prob
-                    ref_log_prob = sample["log_probs"][:, t]
-                    approx_kl = 0.5 * torch.mean((log_prob - ref_log_prob) ** 2)
-                    clipfrac = torch.mean(
-                        (torch.abs(ratio - 1.0) > config.train.eps).float()
-                    )
-                    
+
+                    approx_kl = 0.5 * torch.mean((total_prob - total_ref_prob) ** 2)
+                    clipfrac  = torch.mean((torch.abs(ratio - 1.0) > config.train.eps).float())
+
                     LossRecord[epoch][idx // config.train.batch_size].append(loss_value)
                     GradRecord[epoch][idx // config.train.batch_size].append(grad_value)
-                    
-                    # Log to wandb (only if enabled)
+
                     if wandb_run and accelerator.is_main_process and config.wandb.enabled:
                         log_dict = {
-                            "train/loss": loss_value,
-                            "train/epoch": epoch,
-                            "train/learning_rate": optimizer.param_groups[0]['lr'],
-                            "train/batch_idx": idx // config.train.batch_size,
-                            "train/eval_score_mean": evaluation_score.mean().cpu().item(),
-                            "train/eval_score_std": evaluation_score.std().cpu().item(),
-                            "train/ratio_mean": ratio.mean().cpu().item(),
-                            "train/approx_kl": approx_kl.cpu().item(),
-                            "train/clipfrac": clipfrac.cpu().item(),
+                            "train/loss":             loss_value,
+                            "train/epoch":            epoch,
+                            "train/learning_rate":    optimizer.param_groups[0]['lr'],
+                            "train/batch_idx":        idx // config.train.batch_size,
+                            "train/eval_score_mean":  evaluation_score.mean().cpu().item(),
+                            "train/eval_score_std":   evaluation_score.std().cpu().item(),
+                            "train/ratio_mean":       ratio.mean().cpu().item(),
+                            "train/approx_kl":        approx_kl.cpu().item(),
+                            "train/clipfrac":         clipfrac.cpu().item(),
                         }
                         if grad_value is not None:
                             log_dict["train/grad_norm"] = grad_value
                         wandb_run.log(log_dict)
-                    
+
                     optimizer.step()
                     optimizer.zero_grad()
         

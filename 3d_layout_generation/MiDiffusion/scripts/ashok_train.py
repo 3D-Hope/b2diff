@@ -5,7 +5,6 @@
 
 """Script used to train a diffusion models."""
 import argparse
-import math
 import os
 import sys
 import shutil
@@ -393,29 +392,27 @@ def main(argv):
     if args.continue_from_epoch == epochs:
         return
 
-    # lr scheduler: linear warm-up followed by cosine annealing
-    num_warmup_steps    = 1000
-    num_training_steps  = 65000
-    num_cycles          = 0.5
+    # lr scheduler: piecewise-linear lambda decay (epoch-based)
+    _lr_start_epoch = config["training"].get("lr_start_epoch", 1000)
+    _lr_end_epoch   = config["training"].get("lr_end_epoch",   epochs)
+    _lr_start       = config["training"]["lr"]
+    _lr_end         = config["training"].get("lr_end", _lr_start)
 
-    def get_cosine_schedule_with_warmup(
-        optimizer, num_warmup_steps, num_training_steps, num_cycles=0.5
-    ):
-        """Linear warmup + cosine annealing LR schedule."""
-        def lr_lambda(current_step):
-            if current_step < num_warmup_steps:
-                return float(current_step) / float(max(1, num_warmup_steps))
-            progress = float(current_step - num_warmup_steps) / float(
-                max(1, num_training_steps - num_warmup_steps)
-            )
-            return max(0.0, 0.5 * (1.0 + math.cos(math.pi * num_cycles * 2.0 * progress)))
-        return LambdaLR(optimizer, lr_lambda)
+    def _lambda_lr(epoch):
+        """Hold start_lr up to start_epoch, then linearly decay to end_lr."""
+        if epoch <= _lr_start_epoch:
+            return 1.0
+        elif epoch <= _lr_end_epoch:
+            total = _lr_end_epoch - _lr_start_epoch
+            frac  = (epoch - _lr_start_epoch) / total
+            return (1 - frac) * 1.0 + frac * (_lr_end / _lr_start)
+        else:
+            return _lr_end / _lr_start
 
-    scheduler = get_cosine_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=num_warmup_steps,
-        num_training_steps=num_training_steps,
-    )
+    # last_epoch=-1 so PyTorch's internal init-step sets last_epoch=0;
+    # we then call scheduler.step() once per epoch so it tracks loop var i.
+    scheduler = LambdaLR(optimizer, lr_lambda=_lambda_lr,
+                         last_epoch=args.continue_from_epoch - 1)
 
     # Pre-compute the DDPM noise schedule (kept on device for efficiency)
     num_timesteps = config["network"].get("time_num", 1000)
@@ -480,7 +477,6 @@ def main(argv):
                 network, optimizer, sample, ddpm_schedule, max_grad_norm
             )
             global_step += 1
-            scheduler.step()          # step LR every optimizer update
             StatsLogger.instance().print_progress(i, b + 1, loss)
 
             # -- log every step to wandb ---------------------------------------
@@ -494,6 +490,7 @@ def main(argv):
                     "train/lr":          optimizer.param_groups[0]["lr"],
                 }, step=global_step)
 
+        scheduler.step()              # step LR once per epoch
         if (i % save_every) == 0:
             save_checkpoints(i, network, optimizer, experiment_directory)
         StatsLogger.instance().clear()

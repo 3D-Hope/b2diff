@@ -129,8 +129,125 @@ class TrainingPipeline:
             )
             logger.info("Wandb initialized for pipeline tracking (single run for all stages)")
     
+    def load_midiffusion(self):
+
+        """Load SceneDiffuserMiDiffusion model once for all stages.
+
+        Steps
+        -----
+        1. Instantiate SceneDiffuserMiDiffusion.
+        2. Optionally load a pretrained checkpoint from config.pretrained.model.
+        3. If config.use_lora is True, apply PEFT LoRA to the ``out_proj``
+           Linear layers that live inside every MultiheadAttention block
+           (both SelfAttention and CrossAttention).  This is the standard
+           "attention output projection" LoRA strategy.
+        4. If use_lora is False, freeze the floor encoder and fine-tune only
+           the denoising transformer (model.model).
+        5. Store the model as self.pipeline and the trainable subset as
+           self.trainable_layers – matching the contract expected by
+           run_sampling / run_training.
+        """
+        import torch
+
+        # Make MiDiffusion importable regardless of where the script is run from.
+        midiffusion_root = os.path.join(project_root, "3d_layout_generation", "MiDiffusion")
+        if midiffusion_root not in sys.path:
+            sys.path.insert(0, midiffusion_root)
+
+        from midiffusion.ashok_midiffusion import SceneDiffuserMiDiffusion
+
+        logger.info("Loading SceneDiffuserMiDiffusion (ONCE for all stages)...")
+        device = torch.device(f"cuda:{self.config.dev_id}")
+        torch.cuda.set_device(self.config.dev_id)
+
+        # ------------------------------------------------------------------
+        # 1. Build model
+        # ------------------------------------------------------------------
+        network = SceneDiffuserMiDiffusion()
+
+        # ------------------------------------------------------------------
+        # 2. Load pretrained checkpoint (optional)
+        # ------------------------------------------------------------------
+        pretrained_path = self.config.midiffusion.checkpoint_path
+        if pretrained_path and os.path.exists(pretrained_path):
+            state = torch.load(pretrained_path, map_location=device)
+            network.load_state_dict(state)
+            logger.info(f"Loaded checkpoint from {pretrained_path}")
+        else:
+            logger.info("No pretrained checkpoint found – training SceneDiffuserMiDiffusion from scratch")
+
+        # Freeze everything first; we unfreeze selectively below.
+        network.requires_grad_(False)
+
+        # ------------------------------------------------------------------
+        # 3. LoRA setup (recommended for fine-tuning)
+        # ------------------------------------------------------------------
+        if self.config.use_lora:
+            try:
+                from peft import LoraConfig, get_peft_model
+
+                # SelfAttention and CrossAttention now use explicit nn.Linear
+                # layers (q_proj, k_proj, v_proj, out_proj), so PEFT can target
+                # all four – matching the Hu et al. LoRA paper recommendation
+                # of adapting Wq and Wv (we add Wk and Wo for completeness).
+                lora_rank    = getattr(self.config, "lora_rank",    4)
+                lora_alpha   = getattr(self.config, "lora_alpha",   4)
+                lora_dropout = getattr(self.config, "lora_dropout", 0.0)
+
+                lora_config = LoraConfig(
+                    r=lora_rank,
+                    lora_alpha=lora_alpha,
+                    # All four attention projections — now explicit nn.Linear layers
+                    # (SelfAttention/CrossAttention no longer use nn.MultiheadAttention,
+                    #  so out_proj.forward() is called directly and LoRA is invoked).
+                    target_modules=["q_proj", "k_proj", "v_proj", "out_proj"],
+                    lora_dropout=lora_dropout,
+                    bias="none",
+                )
+                network = get_peft_model(network, lora_config)
+                network.print_trainable_parameters()
+                logger.info(
+                    f"✓ LoRA applied (rank={lora_rank}, alpha={lora_alpha}) "
+                    "to q_proj, k_proj, v_proj, out_proj in all attention heads"
+                )
+                self.trainable_layers = network
+
+            except ImportError:
+                logger.warning(
+                    "peft is not installed – falling back to full fine-tuning. "
+                    "Install with: pip install peft"
+                )
+                network.requires_grad_(True)
+                self.trainable_layers = network
+
+        # ------------------------------------------------------------------
+        # 4. Full fine-tuning path (use_lora=False)
+        #    Freeze the floor encoder; only update the denoising transformer.
+        # ------------------------------------------------------------------
+        else:
+            network.floor_encoder.requires_grad_(False)
+            network.model.requires_grad_(True)
+            self.trainable_layers = network.model
+            trainable_params = sum(p.numel() for p in network.model.parameters())
+            logger.info(f"Full fine-tuning: {trainable_params:,} trainable params in denoising transformer")
+
+        # ------------------------------------------------------------------
+        # 5. Move to device and expose via self.pipeline
+        # ------------------------------------------------------------------
+        network.to(device)
+
+        # self.pipeline is the contract used by run_sampling / run_training;
+        # for 3-D scenes it holds the full SceneDiffuserMiDiffusion.
+        self.pipeline = network
+
+        logger.info("✓ SceneDiffuserMiDiffusion loaded and ready for all stages")
+
     def load_model(self):
         """Load model once at the start - reused for all stages."""
+        if self.config.threed_scene_layout:
+            self.load_midiffusion()
+            return
+
         import torch
         from diffusers import StableDiffusionPipeline, DDIMScheduler
         from diffusers.loaders import AttnProcsLayers
