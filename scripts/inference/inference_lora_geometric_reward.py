@@ -19,6 +19,7 @@ script_path = os.path.abspath(__file__)
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(script_path)))
 sys.path.append(project_root)
 from diffusion.ddim_with_logprob import ddim_step_with_logprob, latents_decode
+from core.utils.geometric_rewards import ImageGeometricReward
 from utils.utils import seed_everything
 from accelerate.utils import set_seed, ProjectConfiguration
 from accelerate.logging import get_logger
