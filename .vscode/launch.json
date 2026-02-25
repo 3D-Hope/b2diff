@@ -2,20 +2,21 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "B2-DiffuRL: run_sample (stage 0)",
+            "name": "Debug MiDiffusion generate_results",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/scripts/training/train_pipeline.py",
-            "python": "/home/ajad/miniconda3/envs/b2/bin/python",
+            "program": "scripts/generate_results.py",
             "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}",
-            "justMyCode": false,
+            "cwd": "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion",
             "env": {
-                "CUDA_VISIBLE_DEVICES": "0"
+                "PYTHONPATH": "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion"
             },
             "args": [
-                "sample.num_batches_per_epoch=1"
-            ]
+                "model.pt",
+                "--result_tag", "test",
+                "--n_syn_scenes", "5"
+            ],
+            "python": "/home/ajad/miniconda3/envs/b2/bin/python"
         }
     ]
 }

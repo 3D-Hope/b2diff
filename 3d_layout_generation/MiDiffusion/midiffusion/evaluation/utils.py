@@ -6,6 +6,7 @@ from tqdm import tqdm
 from midiffusion.networks.diffusion_scene_layout_ddpm import DiffusionSceneLayout_DDPM
 from midiffusion.networks.diffusion_scene_layout_mixed import DiffusionSceneLayout_Mixed
 from midiffusion.datasets.threed_front_encoding import Diffusion
+import json
 
 
 def get_feature_mask(network, experiment, num_known_objects, device):
@@ -74,11 +75,24 @@ def generate_layouts(network:DiffusionSceneLayout_DDPM, encoded_dataset:Diffusio
     else:
         raise NotImplemented
     
+
+    
     # network params
     with_room_mask = config["network"].get("room_mask_condition", True)
     print("Floor condition: {}.".format(with_room_mask))
     feature_mask = get_feature_mask(network, experiment, num_known_objects, device)
+
+    # # Extract and save all room features
+    # scene_indices = torch.arange(len(encoded_dataset))
+    # room_feature = torch.from_numpy(np.stack([
+    #     encoded_dataset[ind]["fpbpn"] for ind in scene_indices
+    # ], axis=0)).to(device)
+
+    # room_features_list = room_feature.cpu().numpy().tolist()
     
+    # with open("room_features.json", "w") as f:
+    #     json.dump(room_features_list, f)
+
     # Generate layouts
     network.to(device)
     network.eval()
