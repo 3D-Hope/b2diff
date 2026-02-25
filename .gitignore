@@ -8,3 +8,4 @@ wandb/
 *.__pyc
 *.zip
 outputs/
+model.pt
