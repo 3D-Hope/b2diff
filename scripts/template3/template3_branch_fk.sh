@@ -192,7 +192,7 @@ python3 ./scripts/training/train_pipeline.py \
     train.num_stages_per_increment=10 \
     prompt_file=configs/prompt/template3_train.json \
     resume_id="v310a3hb" \
-    pipeline.continue_from_stage=76
+    pipeline.continue_from_stage=92
 
 
 

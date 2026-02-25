@@ -193,7 +193,7 @@ python3 ./scripts/training/train_pipeline.py \
     prompt_file=configs/prompt/template4_train.json \
     reward_fn=geometric \
     resume_id="xl4juzl1" \
-    pipeline.continue_from_stage=79
+    pipeline.continue_from_stage=94
 
 
 

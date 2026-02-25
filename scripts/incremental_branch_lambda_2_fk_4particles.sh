@@ -190,7 +190,7 @@ python3 ./scripts/training/train_pipeline.py \
     train.incremental_timesteps=[5,10,15] \
     train.num_stages_per_increment=10 \
     resume_id="8ws8ldwy" \
-    pipeline.continue_from_stage=40
+    pipeline.continue_from_stage=55
     # train.eps=1e-6
     # pipeline.stage_cnt=1500
 
