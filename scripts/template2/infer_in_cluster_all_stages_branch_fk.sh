@@ -133,10 +133,18 @@ echo "GPUs detected: ${NUM_GPUS}"
 
 run_name="template2_branch_fk"
 
+STAGES_OVERRIDE="$(seq 79 99)" 
+
 echo "Looking for stages in model/lora/${run_name}..."
 
 # Find all stage directories and extract the number, sorted
-stages=$(find "model/lora/${run_name}" -maxdepth 1 -type d -name "stage*" | sed -n 's/.*stage\([0-9]*\)/\1/p' | sort -n)
+if [[ -n "${STAGES_OVERRIDE}" ]]; then
+    stages="${STAGES_OVERRIDE}"
+    echo "Using custom stages: ${stages}"
+else
+    stages=$(find "model/lora/${run_name}" -maxdepth 1 -type d -name "stage*" \
+        | sed -n 's/.*stage\([0-9]*\)/\1/p' | sort -n)
+fi
 
 if [ -z "$stages" ]; then
     echo "❌ No stages found for run_name=${run_name}"
