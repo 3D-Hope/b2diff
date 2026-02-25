@@ -134,7 +134,7 @@ echo "GPUs detected: ${NUM_GPUS}"
 
 run_name="geometric_branch_fk"
 stage_number=36
-python3 ./scripts/inference/inference_lora_geometric_reward.py \
+python3 scripts/inference/inference_lora_geometric_reward.py \
 --checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/${run_name}/stage${stage_number}/checkpoints/checkpoint_1/ \
 --output_dir ./outputs/${run_name}/stage${stage_number} \
 --num_images 1080 \
