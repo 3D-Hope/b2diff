@@ -174,7 +174,9 @@ python3 ./scripts/training/train_pipeline.py \
     train.learning_rate=3e-4 \
     train.max_grad_norm=0.005 \
     prompt_file=configs/prompt/template4_train.json \
-    reward_fn=geometric
+    reward_fn=geometric \
+    resume_id="0mdro1u8" \
+    pipeline.continue_from_stage=7
 
 # Only 
 # train.only_train_steps=10
