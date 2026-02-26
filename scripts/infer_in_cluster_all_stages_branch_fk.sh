@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=infer_all_stages_branch_fk
 #SBATCH --partition=batch
-#SBATCH --constraint=zone-msp3
+#SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
@@ -135,8 +135,19 @@ run_name="incremental_branch_lambda_2_fk_4particles"
 
 echo "Looking for stages in model/lora/${run_name}..."
 
+STAGES_OVERRIDE="$(seq 39 99)" 
+
+
 # Find all stage directories and extract the number, sorted
-stages=$(find "model/lora/${run_name}" -maxdepth 1 -type d -name "stage*" | sed -n 's/.*stage\([0-9]*\)/\1/p' | sort -n)
+# stages=$(find "model/lora/${run_name}" -maxdepth 1 -type d -name "stage*" | sed -n 's/.*stage\([0-9]*\)/\1/p' | sort -n)
+
+if [[ -n "${STAGES_OVERRIDE}" ]]; then
+    stages="${STAGES_OVERRIDE}"
+    echo "Using custom stages: ${stages}"
+else
+    stages=$(find "model/lora/${run_name}" -maxdepth 1 -type d -name "stage*" \
+        | sed -n 's/.*stage\([0-9]*\)/\1/p' | sort -n)
+fi
 
 if [ -z "$stages" ]; then
     echo "❌ No stages found for run_name=${run_name}"
