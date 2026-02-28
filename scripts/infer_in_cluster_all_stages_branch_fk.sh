@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=infer_all_stages_branch_fk
+#SBATCH --job-name=infer_all_stages_branch_fk_new
 #SBATCH --partition=batch
 #SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
@@ -104,6 +104,7 @@ uv pip install -r requirements.txt || {
 uv pip install scipy
 pip uninstall setuptools -y
 pip install setuptools==80.9.0
+pip install opencv-python scikit-learn
 # ------------------------------------------------------------------------------
 # STAGE 9: GPU check
 # ------------------------------------------------------------------------------
@@ -131,17 +132,17 @@ fi
 echo "Inference started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="incremental_branch_lambda_2_fk_4particles"
+run_name="incremental_branch_lambda_2_fk_4particles_new"
 
 echo "Looking for stages in model/lora/${run_name}..."
 
-STAGES_OVERRIDE="$(seq 39 99)" 
+# STAGES_OVERRIDE="$(seq 39 99)" 
 
 
 # Find all stage directories and extract the number, sorted
 # stages=$(find "model/lora/${run_name}" -maxdepth 1 -type d -name "stage*" | sed -n 's/.*stage\([0-9]*\)/\1/p' | sort -n)
 
-if [[ -n "${STAGES_OVERRIDE}" ]]; then
+if [[ -n "${STAGES_OVERRIDE:-}" ]]; then
     stages="${STAGES_OVERRIDE}"
     echo "Using custom stages: ${stages}"
 else
@@ -155,6 +156,11 @@ if [ -z "$stages" ]; then
 fi
 
 for stage_number in $stages; do
+    # Only infer in gaps of 5 (0, 5, 10, ...)
+    if (( stage_number % 5 != 0 )); then
+        continue
+    fi
+
     checkpoint_dir="model/lora/${run_name}/stage${stage_number}/checkpoints/checkpoint_1/"
     
     # Ensure checkpoint actually exists
