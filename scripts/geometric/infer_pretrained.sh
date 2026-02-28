@@ -145,7 +145,7 @@ python3 ./scripts/training/train_pipeline.py \
     split_time=1
 
 # NOTE: sample.num_batches_per_epoch = 1080 // (sample.batch_size * sample.num_particles) to get 1080 samples for inception score and mean reward
-python3 ./scripts/inference/run_inception_score.py --img_dir "/home/pramish_paudel/codes/b2diff/outputs/${run_name}/stage0/images/"
+python3 ./scripts/inference/run_inception_score.py --img_dir "/home/pramish_paudel/codes/b2diff/model/lora/${run_name}/stage0/images/"
 
 END_TIME=$(date +%s)
 ELAPSED_SECONDS=$((END_TIME - START_TIME))

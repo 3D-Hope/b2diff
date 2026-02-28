@@ -132,7 +132,7 @@ fi
 echo "Generation started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="template3_pretrained"
+run_name="template3_pretrained_new"
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
     seed=42 \
@@ -144,7 +144,7 @@ python3 ./scripts/training/train_pipeline.py \
     wandb.enabled=false
 
 # NOTE: sample.num_batches_per_epoch = 1080 // (sample.batch_size * sample.num_particles) to get 1080 samples for inception score and mean reward
-python3 ./scripts/inference/run_inception_score.py --img_dir "/home/pramish_paudel/codes/b2diff/outputs/${run_name}/stage0/images/"
+python3 ./scripts/inference/run_inception_score.py --img_dir "/home/pramish_paudel/codes/b2diff/model/lora/${run_name}/stage0/images/"
 
 END_TIME=$(date +%s)
 ELAPSED_SECONDS=$((END_TIME - START_TIME))
