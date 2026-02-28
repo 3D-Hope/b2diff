@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=template2_pretrained
+#SBATCH --job-name=template2_pretrained_new
 #SBATCH --partition=batch
 #SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
@@ -132,7 +132,7 @@ fi
 echo "Generation started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="template2_pretrained"
+run_name="template2_pretrained_new"
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
     seed=42 \
@@ -141,7 +141,7 @@ python3 ./scripts/training/train_pipeline.py \
     sample.num_particles=1 \
     sample.save_train_samples_no_train=true \
     prompt_file=configs/prompt/template2_train.json \
-    wandb.enabled=false
+    split_time=1
 
 # NOTE: sample.num_batches_per_epoch = 1080 // (sample.batch_size * sample.num_particles) to get 1080 samples for inception score and mean reward
 python3 ./scripts/inference/run_inception_score.py --img_dir "/home/pramish_paudel/codes/b2diff/outputs/${run_name}/stage0/images/"

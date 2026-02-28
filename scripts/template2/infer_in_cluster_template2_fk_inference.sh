@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=infer_in_cluster_template2_fk_inference
 #SBATCH --partition=batch
-#SBATCH --constraint=zone-msp3
+#SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
@@ -131,7 +131,7 @@ fi
 
 echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
-run_name="-r "
+run_name="template2_fk_inference"
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
     sample.fk=true \

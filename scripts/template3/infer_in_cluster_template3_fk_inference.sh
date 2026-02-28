@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=infer_in_cluster_template3_fk_inference
 #SBATCH --partition=batch
-#SBATCH --constraint=zone-msp3
+#SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
@@ -131,7 +131,7 @@ fi
 
 echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
-run_name="infer_in_cluster_template3_fk_inference"
+run_name="template3_fk_inference"
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
     sample.fk=true \
@@ -148,7 +148,7 @@ python3 ./scripts/training/train_pipeline.py \
     sample.num_batches_per_epoch=23 \
     sample.save_train_samples_no_train=true \
     wandb.enabled=false \
-    prompt_file=configs/prompts/template2_train.json
+    prompt_file=configs/prompts/template3_train.json
 
 # NOTE: sample.num_batches_per_epoch = 1080 // (sample.batch_size * sample.num_particles) to get 1080 samples for inception score and mean reward
 python3 ./scripts/inference/run_inception_score.py --img_dir /home/pramish_paudel/codes/b2diff/model/lora/${run_name}/stage0/images/

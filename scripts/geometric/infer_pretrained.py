@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=infer_in_cluster_geometric_fk_inference
+#SBATCH --job-name=geometric_pretrained_new
 #SBATCH --partition=batch
 #SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
@@ -129,45 +129,33 @@ else
     NUM_GPUS=$(nvidia-smi --list-gpus | wc -l || echo 1)
 fi
 
-echo "Training started at: ${START_TIME_READABLE}"
+echo "Generation started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
-run_name="geometric_pretrained"
+
+run_name="geometric_pretrained_new"
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
-    sample.fk=true \
-    sample.num_particles=4 \
-    sample.only_best_fk=true \
-    sample.fk_mix_ratio=1 \
-    sample.potential_type="max" \
-    sample.fk_lambda=2.0 \
-    sample.resample_frequency=4 \
-    sample.resampling_t_start=4 \
-    sample.resampling_t_end=16 \
     seed=42 \
-    sample.batch_size=12 \
+    sample.batch_size=48 \
     sample.num_batches_per_epoch=23 \
+    sample.num_particles=1 \
     sample.save_train_samples_no_train=true \
-    wandb.enabled=false \
-    prompt_file=configs/prompts/template4_train.json \
-    reward_fn="geometric"
+    prompt_file=configs/prompt/template4_train.json \
+    reward_fn="geometric" \
+    split_time=1
 
 # NOTE: sample.num_batches_per_epoch = 1080 // (sample.batch_size * sample.num_particles) to get 1080 samples for inception score and mean reward
-python3 ./scripts/inference/run_inception_score.py --img_dir /home/pramish_paudel/codes/b2diff/model/lora/${run_name}/stage0/images/
-# 
+python3 ./scripts/inference/run_inception_score.py --img_dir "/home/pramish_paudel/codes/b2diff/outputs/${run_name}/stage0/images/"
 
-# rm -rf tmp/  
-# rm -rf tmp1/  
-# Timing summary
-# ------------------------------------------------------------------------------
 END_TIME=$(date +%s)
 ELAPSED_SECONDS=$((END_TIME - START_TIME))
 ELAPSED_HOURS=$(awk "BEGIN {printf \"%.4f\", ${ELAPSED_SECONDS}/3600}")
 GPU_HOURS=$(awk "BEGIN {printf \"%.4f\", ${ELAPSED_HOURS}*${NUM_GPUS}}")
 
-TIMING_LOG="logs/${ExpName}_timing.txt"
+TIMING_LOG="logs/${run_name}_timing.txt"
 
 {
-echo "Experiment: ${ExpName}"
+echo "Experiment: ${run_name}"
 echo "Start time: ${START_TIME_READABLE}"
 echo "End time:   $(date '+%Y-%m-%d %H:%M:%S')"
 echo "GPUs used:  ${NUM_GPUS}"
@@ -175,4 +163,4 @@ echo "Wall time:  ${ELAPSED_SECONDS}s"
 echo "GPU hours:  ${GPU_HOURS}"
 } > "${TIMING_LOG}"
 
-echo "✅ Training completed successfully"
+echo "✅ Pretrained generation completed successfully"

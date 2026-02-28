@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=template3_pretrained
+#SBATCH --job-name=template3_pretrained_new
 #SBATCH --partition=batch
 #SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
