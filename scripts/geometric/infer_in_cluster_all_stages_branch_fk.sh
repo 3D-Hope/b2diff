@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=infer_all_stages_branch_fk_geo
+#SBATCH --job-name=infer_all_stages_branch_fk_geo_v2
 #SBATCH --partition=batch
 #SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
@@ -104,6 +104,7 @@ uv pip install -r requirements.txt || {
 uv pip install scipy
 pip uninstall setuptools -y
 pip install setuptools==80.9.0
+pip install opencv-python scikit-learn
 # ------------------------------------------------------------------------------
 # STAGE 9: GPU check
 # ------------------------------------------------------------------------------
@@ -131,7 +132,7 @@ fi
 echo "Inference started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="geometric_branch_fk"
+run_name="geometric_branch_fk_v2"
 
 echo "Looking for stages in model/lora/${run_name}..."
 
@@ -144,6 +145,11 @@ if [ -z "$stages" ]; then
 fi
 
 for stage_number in $stages; do
+    # Only infer in gaps of 5 (0, 5, 10, ...)
+    if (( stage_number % 5 != 0 )); then
+        continue
+    fi
+
     checkpoint_dir="model/lora/${run_name}/stage${stage_number}/checkpoints/checkpoint_1/"
     
     # Ensure checkpoint actually exists

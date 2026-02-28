@@ -104,6 +104,7 @@ uv pip install -r requirements.txt || {
 uv pip install scipy
 pip uninstall setuptools -y
 pip install setuptools==80.9.0
+pip install opencv-python scikit-learn
 # ------------------------------------------------------------------------------
 # STAGE 9: GPU check
 # ------------------------------------------------------------------------------
@@ -133,12 +134,10 @@ echo "GPUs detected: ${NUM_GPUS}"
 
 run_name="template2_branch_fk"
 
-STAGES_OVERRIDE="$(seq 79 99)" 
 
 echo "Looking for stages in model/lora/${run_name}..."
 
-# Find all stage directories and extract the number, sorted
-if [[ -n "${STAGES_OVERRIDE}" ]]; then
+if [[ -n "${STAGES_OVERRIDE:-}" ]]; then
     stages="${STAGES_OVERRIDE}"
     echo "Using custom stages: ${stages}"
 else
@@ -152,6 +151,11 @@ if [ -z "$stages" ]; then
 fi
 
 for stage_number in $stages; do
+    # Only infer in gaps of 5 (0, 5, 10, ...)
+    if (( stage_number % 5 != 0 )); then
+        continue
+    fi
+
     checkpoint_dir="model/lora/${run_name}/stage${stage_number}/checkpoints/checkpoint_1/"
     
     # Ensure checkpoint actually exists
