@@ -148,7 +148,7 @@ python3 ./scripts/training/train_pipeline.py \
     sample.num_batches_per_epoch=23 \
     sample.save_train_samples_no_train=true \
     wandb.enabled=false \
-    prompt_file=configs/prompts/template1_train.json
+    prompt_file=configs/prompt/template1_train.json
 
 # NOTE: sample.num_batches_per_epoch = 1080 // (sample.batch_size * sample.num_particles) to get 1080 samples for inception score and mean reward
 python3 ./scripts/inference/run_inception_score.py --img_dir /home/pramish_paudel/codes/b2diff/model/lora/${run_name}/stage0/images/

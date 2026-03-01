@@ -148,7 +148,7 @@ python3 ./scripts/training/train_pipeline.py \
     sample.num_batches_per_epoch=23 \
     sample.save_train_samples_no_train=true \
     wandb.enabled=false \
-    prompt_file=configs/prompts/template4_train.json \
+    prompt_file=configs/prompt/template4_train.json \
     reward_fn="geometric"
 
 # NOTE: sample.num_batches_per_epoch = 1080 // (sample.batch_size * sample.num_particles) to get 1080 samples for inception score and mean reward
