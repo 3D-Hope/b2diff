@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=template2_pretrained_new
+#SBATCH --job-name= 
 #SBATCH --partition=batch
 #SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
@@ -136,8 +136,8 @@ run_name="template2_pretrained_new"
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
     seed=42 \
-    sample.batch_size=48 \
-    sample.num_batches_per_epoch=23 \
+    sample.batch_size=45 \
+    sample.num_batches_per_epoch=24 \
     sample.num_particles=1 \
     sample.save_train_samples_no_train=true \
     prompt_file=configs/prompt/template2_train.json \
