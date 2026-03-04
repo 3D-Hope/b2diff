@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=all_norm_inc
+#SBATCH --job-name=all_norm_inc_new
 #SBATCH --partition=batch
-#SBATCH --constraint=zone-msp3
+#SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
@@ -160,7 +160,7 @@ echo "GPUs detected: ${NUM_GPUS}"
     # pipeline.continue_from_stage=110 \
     # resume_id="tg2dp40a" \
 
-run_name="all_norm_inc"
+run_name="all_norm_inc_new"
 # sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward if boest_only_fk is false else only 4 particles for best reward only no worst
 # batch size for sampling 12 for only best and 6 for both best and worst
 python3 ./scripts/training/train_pipeline.py \
@@ -174,9 +174,10 @@ python3 ./scripts/training/train_pipeline.py \
     train.max_grad_norm=0.005 \
     train.incremental_training=true \
     sample.no_branching=true \
-    sample.no_selection=true
+    sample.no_selection=true \
     train.incremental_timesteps=[5,10,15,20] \
-    train.num_stages_per_increment=10
+    train.num_stages_per_increment=10 \
+    sample.normalize_all=true
     # train.eps=1e-6
     # pipeline.stage_cnt=1500
 
