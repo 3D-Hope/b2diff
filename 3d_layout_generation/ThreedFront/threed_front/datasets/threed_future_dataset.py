@@ -37,6 +37,9 @@ class ThreedFutureDataset(object):
         for i, oi in enumerate(objects):
             mses[oi] = np.sum((oi.size - query_size)**2, axis=-1)
         sorted_mses = [k for k, v in sorted(mses.items(), key=lambda x:x[1])]
+        # # if query_label == "wardrobe": return sorted_mses[3]
+        # if query_label == "nightstand": return sorted_mses[0]
+        # if query_label == "double_bed": return sorted_mses[3]
         return sorted_mses[0]
 
     def get_closest_furniture_to_2dbox(self, query_label, query_size):

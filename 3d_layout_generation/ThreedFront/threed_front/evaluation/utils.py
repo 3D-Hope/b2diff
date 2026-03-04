@@ -148,7 +148,7 @@ def collect_cooccurrence(scenes, num_classes):
     return cooccur_count
 
 
-def evaluate_kl_divergence(raw_dataset:CachedThreedFront, scene_indices, layout_list):
+def evaluate_kl_divergence(raw_dataset:CachedThreedFront, scene_indices, layout_list, tv_bed=True):
     """Compute KL-divergence between ground-truth and synthesized object distributions"""
     # Collect synthesized and ground truth class labels
     n_object_types = raw_dataset.n_object_types
@@ -161,17 +161,40 @@ def evaluate_kl_divergence(raw_dataset:CachedThreedFront, scene_indices, layout_
         syn_class_labels.append({"class_labels": bbox_params["class_labels"]})
 
     # Compute frequencies of the class labels
+    # double_bed = index 8, tv_stand = index 19
+    DOUBLE_BED_IDX = 8
+    TV_STAND_IDX = 19
+    if tv_bed:
+        gt_indices = [
+            i for i in range(len(raw_dataset))
+            if (raw_dataset.get_room_params(i)["class_labels"][:, DOUBLE_BED_IDX].sum() > 0
+                and raw_dataset.get_room_params(i)["class_labels"][:, TV_STAND_IDX].sum() > 0)
+        ]
+        print(f"[evaluate_kl_divergence] tv_bed=True: using {len(gt_indices)}/{len(raw_dataset)} GT rooms that contain both double_bed (idx={DOUBLE_BED_IDX}) and tv_stand (idx={TV_STAND_IDX})")
+    else:
+        gt_indices = list(range(len(raw_dataset)))
+
     gt_total = sum(
         [raw_dataset.get_room_params(i)["class_labels"][:, :n_object_types].sum(0)
-         for i in range(len(raw_dataset))]
+         for i in gt_indices]
     )
     gt_freq = gt_total / sum(
-        [raw_dataset.get_room_params(i)["class_labels"].shape[0] 
-         for i in range(len(raw_dataset))]
+        [raw_dataset.get_room_params(i)["class_labels"].shape[0]
+         for i in gt_indices]
     )
     syn_total = sum([d["class_labels"].sum(0) for d in syn_class_labels])
     syn_freq = syn_total / sum([d["class_labels"].shape[0] for d in syn_class_labels])
     
+    # Print per-class frequencies side by side
+    class_names = raw_dataset.object_types  # length == n_object_types
+    print(f"\n{'idx':<5} {'class':<35} {'gt_freq':>10} {'syn_freq':>10} {'diff':>10}")
+    print("-" * 72)
+    for ci, name in enumerate(class_names):
+        diff = syn_freq[ci] - gt_freq[ci]
+        print(f"{ci:<5} {name:<35} {gt_freq[ci]:>10.4f} {syn_freq[ci]:>10.4f} {diff:>+10.4f}")
+    print("-" * 72)
+    print(f"{'':5} {'TOTAL':<35} {gt_freq.sum():>10.4f} {syn_freq.sum():>10.4f}")
+
     # Check freqeuncies sum to 1 (i.e. no label outside the 0:n_object_types range)
     assert 0.9999 <= gt_freq.sum() <= 1.0001
     assert 0.9999 <= syn_freq.sum() <= 1.0001

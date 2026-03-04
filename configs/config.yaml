@@ -11,6 +11,9 @@ save_path: "./model/lora"
 mixed_precision: "fp16"
 allow_tf32: false
 use_lora: true
+lora_rank: 16  # Increase from 4 for more learning capacity (8, 16, 32, 64)
+lora_alpha: 16  # Scale of LoRA updates (recommend: same as lora_rank)
+lora_dropout: 0.0
 resume_id: "" #wandb run id to resume from
 dev_id: 0
 
@@ -35,6 +38,10 @@ reward_fn: "clip"
 
 # Model Selection: 2D (Stable Diffusion) vs 3D (MiDiffusion)
 threed_scene_layout: false  # Set to true to use MiDiffusion for 3D scene generation
+# 3D reward function selection
+# tv_bed: when true, reward is +1 (both TV stand & bed present), +0.5 (one present), -1 (neither)
+#         when false, uses non-penetration (collision) reward
+tv_bed: false
 
 # Pretrained model (2D - Stable Diffusion)
 pretrained:

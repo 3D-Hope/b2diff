@@ -12,6 +12,7 @@ import pickle
 
 import numpy as np
 import torch
+from diffusers import DDIMScheduler
 from tqdm import tqdm
 
 from utils import PROJ_DIR, load_config, update_data_file_paths
@@ -25,80 +26,53 @@ from midiffusion.ashok_midiffusion import SceneDiffuserMiDiffusion
 
 
 # ---------------------------------------------------------------------------
-# DDPM schedule helpers  (same as ashok_train.py)
-# ---------------------------------------------------------------------------
-
-def make_ddpm_schedule(num_timesteps=1000, beta_start=1e-4, beta_end=0.02, device="cpu"):
-    betas = torch.linspace(beta_start, beta_end, num_timesteps, device=device)
-    alphas = 1.0 - betas
-    alphas_cumprod = torch.cumprod(alphas, dim=0)
-    return {
-        "betas":                          betas,
-        "alphas":                         alphas,
-        "alphas_cumprod":                 alphas_cumprod,
-        "sqrt_alphas_cumprod":            torch.sqrt(alphas_cumprod),
-        "sqrt_one_minus_alphas_cumprod":  torch.sqrt(1.0 - alphas_cumprod),
-    }
-
-
-# ---------------------------------------------------------------------------
-# DDPM reverse (denoising) sampler
+# DDIM reverse (denoising) sampler
 # ---------------------------------------------------------------------------
 
 @torch.no_grad()
-def ddpm_sample(network, fpbpn, schedule, num_objects, scene_dim, device):
-    """Run the full DDPM reverse chain for one batch.
+def ddim_sample(
+    network, fpbpn,
+    num_timesteps, beta_start, beta_end,
+    num_objects, scene_dim, device,
+    num_denoising_steps=20, eta=0.0,
+):
+    """Run DDIM reverse chain for one batch.
 
     Args:
-        network    : SceneDiffuserMiDiffusion (eval mode, on device)
-        fpbpn      : (B, nfpbp, 4) floor-plan boundary-point-normals tensor
-        schedule   : dict of DDPM schedule tensors
-        num_objects: N (max objects per scene)
-        scene_dim  : C (per-object feature dimension, e.g. 30)
-        device     : torch.device
+        network             : SceneDiffuserMiDiffusion (eval mode, on device)
+        fpbpn               : (B, nfpbp, 4) floor-plan boundary-point-normals tensor
+        num_timesteps       : total training timesteps (e.g. 1000)
+        beta_start          : diffusion beta_start
+        beta_end            : diffusion beta_end
+        num_objects         : N (max objects per scene)
+        scene_dim           : C (per-object feature dimension, e.g. 30)
+        device              : torch.device
+        num_denoising_steps : number of DDIM inference steps (default 20)
+        eta                 : stochasticity (0.0 = deterministic DDIM)
 
     Returns:
         x0_pred : (B, N, C) denoised scene tensor (still in scaled/encoded space)
     """
     B = fpbpn.shape[0]
-    T = schedule["betas"].shape[0]
 
-    betas   = schedule["betas"]
-    alphas  = schedule["alphas"]
-    alphas_cumprod = schedule["alphas_cumprod"]
+    scheduler = DDIMScheduler(
+        num_train_timesteps=num_timesteps,
+        beta_start=beta_start,
+        beta_end=beta_end,
+        clip_sample=False,
+        prediction_type="epsilon",
+        steps_offset=1,
+    )
+    scheduler.set_timesteps(num_denoising_steps, device=device)
 
-    # start from pure noise
+    print(f"Running DDIM sampling with {num_denoising_steps} steps")
+
     x_t = torch.randn(B, num_objects, scene_dim, device=device)
 
-    for t_idx in reversed(range(T)):
-        t_tensor = torch.full((B,), t_idx, dtype=torch.long, device=device)
-
-        # predict noise
+    for t in scheduler.timesteps:
+        t_tensor = torch.full((B,), t.item(), dtype=torch.long, device=device)
         eps_pred = network.predict_noise(x_t, t_tensor, fpbpn)
-
-        # compute posterior mean  μ_θ(x_t, t)
-        alpha_t     = alphas[t_idx]
-        beta_t      = betas[t_idx]
-        ab_t        = alphas_cumprod[t_idx]
-        sqrt_1mab   = schedule["sqrt_one_minus_alphas_cumprod"][t_idx]
-
-        # x0 estimate
-        sqrt_ab = torch.sqrt(ab_t)
-        x0_est  = (x_t - sqrt_1mab * eps_pred) / sqrt_ab
-
-        # mean of q(x_{t-1} | x_t, x0_est)
-        if t_idx > 0:
-            ab_prev     = alphas_cumprod[t_idx - 1]
-            sqrt_ab_p   = torch.sqrt(ab_prev)
-            coef1       = sqrt_ab_p * beta_t      / (1.0 - ab_t)
-            coef2       = torch.sqrt(alpha_t) * (1.0 - ab_prev) / (1.0 - ab_t)
-            mean        = coef1 * x0_est + coef2 * x_t
-            # posterior variance
-            variance    = beta_t * (1.0 - ab_prev) / (1.0 - ab_t)
-            noise       = torch.randn_like(x_t)
-            x_t         = mean + torch.sqrt(variance) * noise
-        else:
-            x_t = x0_est   # last step: no noise
+        x_t = scheduler.step(eps_pred, t, x_t, eta=eta).prev_sample
 
     return x_t   # (B, N, C)
 
@@ -176,6 +150,7 @@ def generate_ashok_layouts(
     batch_size=16,
     device="cpu",
     overfit_sample=None,
+    num_denoising_steps=20,
 ):
     """Generate scene layouts with SceneDiffuserMiDiffusion.
 
@@ -186,12 +161,8 @@ def generate_ashok_layouts(
     """
     num_timesteps  = config["network"].get("time_num", 1000)
     diff_geo       = config["network"].get("diffusion_geometric_kwargs", {})
-    schedule = make_ddpm_schedule(
-        num_timesteps=num_timesteps,
-        beta_start=diff_geo.get("beta_start", 1e-4),
-        beta_end=diff_geo.get("beta_end", 0.02),
-        device=device,
-    )
+    beta_start     = diff_geo.get("beta_start", 1e-4)
+    beta_end       = diff_geo.get("beta_end", 0.02)
 
     num_objects    = config["network"]["sample_num_points"]
     scene_dim      = 30   # 3 trans + 3 size + 2 angle + 22 class
@@ -241,7 +212,12 @@ def generate_ashok_layouts(
             ).to(device).float()
 
         # run reverse diffusion → (B_cur, N, 30)
-        x0 = ddpm_sample(network, fpbpn, schedule, num_objects, scene_dim, device)
+        x0 = ddim_sample(
+            network, fpbpn,
+            num_timesteps, beta_start, beta_end,
+            num_objects, scene_dim, device,
+            num_denoising_steps=num_denoising_steps,
+        )
 
         # remove "empty" slots and convert class_labels to one-hot (n_object_types)
         # mirrors DiffusionSceneLayout_DDPM.delete_empty_from_network_samples
@@ -324,6 +300,12 @@ def main(argv):
             "to the baseline model and these weights are loaded. If not provided, "
             "only the baseline model weights are used."
         )
+    )
+    parser.add_argument(
+        "--num_denoising_steps",
+        type=int,
+        default=20,
+        help="Number of DDIM inference steps (default: 20)"
     )
 
     args = parser.parse_args(argv)
@@ -408,8 +390,8 @@ def main(argv):
 
         # Apply LoRA config (matching train_pipeline.py)
         lora_config = LoraConfig(
-            r=4,
-            lora_alpha=4,
+            r=16,
+            lora_alpha=16,
             target_modules=["q_proj", "k_proj", "v_proj", "out_proj"],
             lora_dropout=0.0,
             bias="none",
@@ -456,6 +438,7 @@ def main(argv):
         batch_size=args.batch_size,
         device=device,
         overfit_sample=overfit_sample,
+        num_denoising_steps=args.num_denoising_steps,
     )
 
     # save – identical structure to generate_results.py

@@ -230,6 +230,106 @@ class FKD:
         log_probs = log_probs[indices]
         return resampled_latents, resampled_images, log_probs, indices
 
+    def resample_3d(
+        self,
+        *,
+        sampling_idx: int,
+        latents: torch.Tensor,
+        x0_preds: torch.Tensor,
+        log_probs: torch.Tensor,
+        get_best_indices: bool = True,
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        """
+        3D scene-layout variant of resample(). Rewards are computed by calling
+        self.reward_fn(x0_preds) directly — no image decoding or file I/O.
+
+        self.reward_fn must accept (P, N, C) scene tensor and return (P,) reward tensor.
+
+        Args:
+            sampling_idx:     Current sampling index (timestep).
+            latents:          Current noisy scene states  (P, N, C).
+            x0_preds:         Predicted x0 scenes         (P, N, C).
+            log_probs:        Log-probabilities for step  (P,).
+            get_best_indices: True → steer toward high reward; False → low reward.
+
+        Returns:
+            resampled_latents: (P, N, C)
+            log_probs:         (P,)  — reindexed
+            indices:           (P,) LongTensor, or None if step is not in resampling interval
+        """
+        resampling_interval = self.resampling_interval
+
+        if sampling_idx not in resampling_interval:
+            return latents, log_probs, None  # no resampling
+
+        # Compute rewards directly from x0 scene predictions
+        raw_scores = self.reward_fn(x0_preds)  # (P,)
+
+        if not get_best_indices:
+            rs_candidates = -raw_scores.clone().to(self.device)
+        else:
+            rs_candidates = raw_scores.clone().to(self.device)
+
+        # Compute importance weights — exact same logic as resample()
+        if self.potential_type == PotentialType.MAX:
+            rs_candidates = torch.max(rs_candidates, self.population_rs)
+            w = torch.exp(self.lmbda * rs_candidates)
+        elif self.potential_type == PotentialType.ADD:
+            rs_candidates = rs_candidates + self.population_rs
+            w = torch.exp(self.lmbda * rs_candidates)
+        elif self.potential_type == PotentialType.DIFF:
+            diffs = rs_candidates - self.population_rs
+            w = torch.exp(self.lmbda * diffs)
+        elif self.potential_type == PotentialType.RT:
+            w = torch.exp(self.lmbda * rs_candidates)
+        else:
+            raise ValueError(f"potential_type {self.potential_type} not recognized")
+
+        if sampling_idx == self.time_steps - 1:
+            if (
+                self.potential_type == PotentialType.MAX
+                or self.potential_type == PotentialType.ADD
+                or self.potential_type == PotentialType.RT
+            ):
+                w = torch.exp(self.lmbda * rs_candidates) / self.product_of_potentials
+
+        w = torch.clamp(w, 0, 1e10)
+        w[torch.isnan(w)] = 0.0
+
+        if self.adaptive_resampling or sampling_idx == self.time_steps - 1:
+            # compute effective sample size
+            normalized_w = w / w.sum()
+            ess = 1.0 / (normalized_w.pow(2).sum())
+
+            if ess < 0.5 * self.num_particles:
+                print(f"Resampling at timestep {sampling_idx} with ESS: {ess}")
+                indices = torch.multinomial(
+                    w, num_samples=self.num_particles, replacement=True
+                )
+                resampled_latents = latents[indices]
+                self.population_rs = rs_candidates[indices]
+                self.product_of_potentials = (
+                    self.product_of_potentials[indices] * w[indices]
+                )
+            else:
+                # No resampling — identity indices for consistency
+                resampled_latents = latents
+                self.population_rs = rs_candidates
+                indices = torch.arange(self.num_particles, device=self.device)
+
+        else:
+            indices = torch.multinomial(
+                w, num_samples=self.num_particles, replacement=True
+            )
+            resampled_latents = latents[indices]
+            self.population_rs = rs_candidates[indices]
+            self.product_of_potentials = (
+                self.product_of_potentials[indices] * w[indices]
+            )
+
+        log_probs = log_probs[indices]
+        return resampled_latents, log_probs, indices
+
 
 if __name__ == "__main__":
 

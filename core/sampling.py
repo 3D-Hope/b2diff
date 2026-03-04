@@ -22,6 +22,28 @@ from diffusers.models.attention_processor import LoRAAttnProcessor
 from diffusion.ddim_with_logprob import ddim_step_with_logprob, latents_decode
 from utils.utils import post_processing, seed_everything
 
+import yaml
+try:
+    from yaml import CLoader as Loader
+except ImportError:
+    from yaml import Loader
+
+def _load_midiff_cfg(config_file):
+    with open(config_file, "r") as f:
+        config = yaml.load(f, Loader=Loader)
+    return config
+
+PROJ_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+PATH_TO_DATASET_FILES = os.path.join(PROJ_DIR, "../ThreedFront/dataset_files/")
+PATH_TO_PROCESSED_DATA = os.path.join(PROJ_DIR, "../ThreedFront/output/3d_front_processed/")
+
+def _update_data_paths(config_data):
+    config_data["dataset_directory"] = \
+        os.path.join(PATH_TO_PROCESSED_DATA, config_data["dataset_directory"])
+    config_data["annotation_file"] = \
+        os.path.join(PATH_TO_DATASET_FILES, config_data["annotation_file"])
+    return config_data
+
 tqdm = partial(tqdm_lib, dynamic_ncols=True)
 
 
@@ -331,6 +353,77 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
         global_idx = len(total_fpbpn)
         local_idx  = 0
 
+        # ---- Load MiDiffusion datasets for ThreedFrontResults-compatible saving ----
+        # import sys as _sys
+        # _midiff_scripts_dir = os.path.join(
+        #     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        #     "3d_layout_generation", "MiDiffusion", "scripts"
+        # )
+        # if _midiff_scripts_dir not in _sys.path:
+        #     _sys.path.insert(0, _midiff_scripts_dir)
+        # from threed_front.evaluation import ThreedFrontResults
+        # from midiffusion.datasets.threed_front_encoding import get_dataset_raw_and_encoded as _get_ds_raw_enc
+        # from threed_front.datasets import get_raw_dataset as _get_raw_ds
+
+        # _midiff_cnf = _load_midiff_cfg(config.midiffusion.config_path)
+        # if "_eval" not in _midiff_cnf["data"]["encoding_type"]:
+        #     _midiff_cnf["data"]["encoding_type"] += "_eval"
+        # _data_cfg = _update_data_paths(_midiff_cnf["data"])
+        # print("[intermediate saving] Loading train/test datasets for ThreedFrontResults ...")
+        # _raw_train_ds = _get_raw_ds(
+        #     _data_cfg,
+        #     split=_midiff_cnf["training"].get("splits", ["train", "val"]),
+        #     include_room_mask=_midiff_cnf["network"].get("room_mask_condition", True),
+        # )
+        # _raw_test_ds, _enc_dataset = _get_ds_raw_enc(
+        #     _data_cfg,
+        #     split=_midiff_cnf["validation"].get("splits", ["test"]),
+        #     max_length=_midiff_cnf["network"]["sample_num_points"],
+        #     include_room_mask=_midiff_cnf["network"].get("room_mask_condition", True),
+        # )
+        # _n_obj_types = _enc_dataset.n_object_types
+        # print(f"[intermediate saving] Datasets loaded. n_object_types={_n_obj_types}")
+
+        # def _delete_empty_from_x0(x0_batch, n_object_types):
+        #     """Convert (B, N, 30) raw x0 tensor → list[B] of layout dicts
+        #     with empty objects removed (same logic as ashok_generate_results.py)."""
+        #     bbox_dim   = 8
+        #     class_dim  = x0_batch.shape[-1] - bbox_dim
+        #     N          = x0_batch.shape[1]
+        #     translations = x0_batch[..., 0:3]
+        #     sizes        = x0_batch[..., 3:6]
+        #     angles       = x0_batch[..., 6:8]   # [cos θ, sin θ]
+        #     class_raw    = x0_batch[..., bbox_dim:]
+        #     class_scores = class_raw[..., :n_object_types]
+        #     obj_max, obj_max_ind = torch.max(class_scores, dim=-1)
+        #     empty_logit  = class_raw[..., class_dim - 1]
+        #     is_empty     = empty_logit > obj_max
+        #     class_onehot = torch.nn.functional.one_hot(
+        #         obj_max_ind, num_classes=n_object_types
+        #     ).float()
+        #     B_loc = x0_batch.shape[0]
+        #     boxes_list = []
+        #     for b_loc in range(B_loc):
+        #         box = {
+        #             "translations": torch.zeros(1, 0, 3),
+        #             "sizes":        torch.zeros(1, 0, 3),
+        #             "angles":       torch.zeros(1, 0, 2),
+        #             "class_labels": torch.zeros(1, 0, n_object_types),
+        #         }
+        #         for i in range(N):
+        #             if is_empty[b_loc, i]:
+        #                 continue
+        #             box["translations"] = torch.cat(
+        #                 [box["translations"], translations[b_loc:b_loc+1, i:i+1, :].cpu()], dim=1)
+        #             box["sizes"]        = torch.cat(
+        #                 [box["sizes"],        sizes[b_loc:b_loc+1, i:i+1, :].cpu()],        dim=1)
+        #             box["angles"]       = torch.cat(
+        #                 [box["angles"],       angles[b_loc:b_loc+1, i:i+1, :].cpu()],       dim=1)
+        #             box["class_labels"] = torch.cat(
+        #                 [box["class_labels"], class_onehot[b_loc:b_loc+1, i:i+1, :].cpu()], dim=1)
+        #         boxes_list.append(box)
+        #     return boxes_list
+
         for idx in tqdm(
             range(config.sample.num_batches_per_epoch),
             disable=not accelerator.is_local_main_process,
@@ -420,6 +513,44 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
                             {k: torch.cat([total_samples[k], new_tensors[k]]) for k in keys},
                             _f
                         )
+
+        # ---------------------------------------------------------------
+        # Save final scenes as ThreedFrontResults for rendering
+        # ---------------------------------------------------------------
+        # if getattr(config.sample, 'save_train_samples_no_train', False):
+        #     print("[save_train_samples_no_train] Building ThreedFrontResults from final scenes …")
+
+        #     all_sampled_indices = []
+        #     all_layouts         = []
+
+        #     # `samples` has one dict per (batch, branch-k) appended in order.
+        #     # `total_fpbpn[global_idx + j]` gives the B floor-plan indices for samples[j].
+        #     for sample_j, batch_s in enumerate(samples):
+        #         # Final fully-denoised scenes: (B, N, C)
+        #         final_scenes_batch  = batch_s["next_scenes"][:, -1].float()
+        #         B_cur               = final_scenes_batch.shape[0]
+        #         fpbpn_batch_indices = total_fpbpn[global_idx + sample_j]
+
+        #         boxes_list = _delete_empty_from_x0(final_scenes_batch, _n_obj_types)
+        #         for b_loc in range(B_cur):
+        #             fpbpn_idx = fpbpn_batch_indices[b_loc]
+        #             bbox_dict = boxes_list[b_loc]
+        #             processed = _enc_dataset.post_process(bbox_dict)
+        #             all_layouts.append({k: v.numpy()[0] for k, v in processed.items()})
+        #             all_sampled_indices.append(fpbpn_idx)
+
+        #     result = ThreedFrontResults(
+        #         _raw_train_ds, _raw_test_ds, _midiff_cnf,
+        #         all_sampled_indices, all_layouts,
+        #     )
+        #     out_path = os.path.join(save_dir, 'final_best_samples.pkl')
+        #     with open(out_path, 'wb') as _pf:
+        #         pickle.dump(result, _pf)
+        #     print(f"[save_train_samples_no_train] Saved {len(all_layouts)} layouts → {out_path}")
+        #     if logger:
+        #         logger.info(
+        #             f"[save_train_samples_no_train] Saved {len(all_layouts)} layouts → {out_path}"
+        #         )
 
         if wandb_run:
             wandb_run.log({

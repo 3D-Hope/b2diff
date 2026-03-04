@@ -173,6 +173,7 @@ def get_textured_objects(
 
         # Retrieve 3D-FUTURE model
         if retrieve_mode == "size":
+            print(f"query_label: {query_label}, query_size: {query_size}")
             furniture = objects_dataset.get_closest_furniture_to_box(
                 query_label, query_size)
         elif retrieve_mode == "objfeat":

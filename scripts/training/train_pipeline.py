@@ -186,29 +186,32 @@ class TrainingPipeline:
             try:
                 from peft import LoraConfig, get_peft_model
 
-                # SelfAttention and CrossAttention now use explicit nn.Linear
-                # layers (q_proj, k_proj, v_proj, out_proj), so PEFT can target
-                # all four – matching the Hu et al. LoRA paper recommendation
-                # of adapting Wq and Wv (we add Wk and Wo for completeness).
-                lora_rank    = getattr(self.config, "lora_rank",    4)
-                lora_alpha   = getattr(self.config, "lora_alpha",   4)
+                # LoRA configuration for fine-tuning
+                # Capacity is controlled primarily by rank (r); increase for more expressiveness
+                lora_rank    = getattr(self.config, "lora_rank",    16)  # Default 16 (was 4)
+                lora_alpha   = getattr(self.config, "lora_alpha",   16)  # Scale factor (recommend: = rank)
                 lora_dropout = getattr(self.config, "lora_dropout", 0.0)
+
+                # Target modules: all attention + MLP layers in transformer blocks
+                # (SelfAttention/CrossAttention use explicit q/k/v/out_proj Linear layers)
+                target_modules = [
+                    "q_proj", "k_proj", "v_proj", "out_proj",  # attention
+                ]
+                # Could expand to include MLPs for even more capacity:
+                # target_modules += ["fc1", "fc2"]  (if MLPs are named)
 
                 lora_config = LoraConfig(
                     r=lora_rank,
                     lora_alpha=lora_alpha,
-                    # All four attention projections — now explicit nn.Linear layers
-                    # (SelfAttention/CrossAttention no longer use nn.MultiheadAttention,
-                    #  so out_proj.forward() is called directly and LoRA is invoked).
-                    target_modules=["q_proj", "k_proj", "v_proj", "out_proj"],
+                    target_modules=target_modules,
                     lora_dropout=lora_dropout,
-                    bias="none",
+                    bias="none",  # Supported in all PEFT versions; rank increase provides capacity
                 )
                 network = get_peft_model(network, lora_config)
                 network.print_trainable_parameters()
                 logger.info(
-                    f"✓ LoRA applied (rank={lora_rank}, alpha={lora_alpha}) "
-                    "to q_proj, k_proj, v_proj, out_proj in all attention heads"
+                    f"✓ LoRA applied (rank={lora_rank}, alpha={lora_alpha}, bias=none) "
+                    "to attention projections in all transformer blocks"
                 )
                 self.trainable_layers = network
 
