@@ -18,7 +18,7 @@ from simple_3dviz.utils import render, save_frame
 from simple_3dviz.behaviours.io import SaveFrames
 from threed_front.evaluation import ThreedFrontResults
 # Remove ORTHOGRAPHIC_PROJECTION_SCENE import
-from threed_front.rendering import get_textured_objects, get_floor_plan, render_projection
+from threed_front.rendering import get_textured_objects, get_floor_plan, render_projection, build_walls_with_door
 from utils import PATH_TO_PICKLED_3D_FUTURE_MODEL, PATH_TO_FLOOR_PLAN_TEXTURES
 
 
@@ -220,7 +220,7 @@ def main(argv):
     
     # Render projection images
     for i in tqdm(range(len(threed_front_results))):
-        if i not in [51, 30, 124, 727]: continue # TODO: rm 
+        if i not in [298]: continue # TODO: rm 
         scene_idx = threed_front_results[i][0]
         image_path = path_to_image.format(
             i, threed_front_results.test_dataset[scene_idx].scene_id
@@ -269,7 +269,71 @@ def main(argv):
             renderables.append(floor_plan)
             if args.export_glb and tr_floor is not None:
                 trimesh_meshes.append(tr_floor)
-        
+
+        # ── Walls + Door ────────────────────────────────────────────────────
+        # Load ordered floor-plan corners (XZ, centroid-centered) from boxes.npz
+        boxes_path = threed_front_results.test_dataset._path_to_room(scene_idx)
+        D_boxes = np.load(boxes_path)
+        if "floor_plan_ordered_corners" in D_boxes:
+            fpoc = D_boxes["floor_plan_ordered_corners"]  # (N, 2)
+        else:
+            # Fallback: convex hull of unique XZ floor vertices
+            from scipy.spatial import ConvexHull
+            verts_xz = np.unique(
+                (room.floor_plan_vertices - room.floor_plan_centroid)[:, [0, 2]], axis=0
+            )
+            hull = ConvexHull(verts_xz)
+            fpoc = verts_xz[hull.vertices]
+
+        # Determine wall height: top of ceiling/pendant lamp objects, else 2.5 m
+        ceiling_labels = {"ceiling_lamp", "pendant_lamp"}
+        object_types = threed_front_results.test_dataset.object_types
+        ceiling_indices = {
+            idx for idx, lbl in enumerate(object_types) if lbl in ceiling_labels
+        }
+        special_labels = {"start", "end"}
+        skip_indices = ceiling_indices | {
+            idx for idx, lbl in enumerate(object_types) if lbl in special_labels
+        }
+        wall_height = 2.5
+        ground_translations = []
+        ground_sizes = []
+        ground_angles = []
+        for j in range(predicted_layout["class_labels"].shape[0]):
+            cidx = int(predicted_layout["class_labels"][j].argmax(-1))
+            if cidx in ceiling_indices:
+                top_y = float(
+                    predicted_layout["translations"][j, 1]
+                    + predicted_layout["sizes"][j, 1]
+                )
+                if top_y > wall_height:
+                    wall_height = top_y
+            if cidx not in skip_indices:
+                ground_translations.append(predicted_layout["translations"][j])
+                ground_sizes.append(predicted_layout["sizes"][j])
+                ground_angles.append(predicted_layout["angles"][j, 0])
+        furn_trans_for_door  = np.array(ground_translations) if ground_translations else None
+        furn_sizes_for_door  = np.array(ground_sizes)        if ground_sizes        else None
+        furn_angles_for_door = np.array(ground_angles)       if ground_angles       else None
+
+        wall_mesh, door_mesh, tr_walls, tr_door = build_walls_with_door(
+            fpoc, wall_height,
+            translations=furn_trans_for_door,
+            sizes=furn_sizes_for_door,
+            angles=furn_angles_for_door,
+            wall_color=(0.94, 0.92, 0.88),
+            with_trimesh=args.export_glb
+        )
+        renderables.append(wall_mesh)
+        if door_mesh is not None:
+            renderables.append(door_mesh)
+        if args.export_glb:
+            if tr_walls is not None:
+                trimesh_meshes.append(tr_walls)
+            if tr_door is not None:
+                trimesh_meshes.append(tr_door)
+        # ───────────────────────────────────────────────────────────────────
+
         scene.clear()
         for r in renderables:
             scene.add(r)

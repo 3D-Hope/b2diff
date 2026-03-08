@@ -87,6 +87,314 @@ def get_floor_plan(scene: Union[Room, CachedRoom], texture=None,
     return floor, tr_floor, room_mask
 
 
+""" Wall renderables """
+
+def build_wall_renderables(floor_plan_ordered_corners, wall_height,
+                            color=(1.0, 1.0, 1.0), with_trimesh=False):
+    """Build double-sided wall meshes from ordered floor plan corners (XZ, centroid-centered).
+
+    Args:
+        floor_plan_ordered_corners: (N, 2) float array of XZ wall corners,
+            already centered on floor_plan_centroid (same frame as floor vertices).
+        wall_height: float, height of walls in metres (Y axis = up).
+        color: RGB tuple for flat wall color.
+        with_trimesh: if True, also return a trimesh.Trimesh object.
+
+    Returns:
+        wall_mesh: simple_3dviz Mesh
+        tr_walls:  trimesh.Trimesh or None
+    """
+    fpoc = np.asarray(floor_plan_ordered_corners, dtype=np.float32)
+    n = fpoc.shape[0]
+
+    all_verts = []
+    all_faces = []
+    vc = 0  # running vertex count
+
+    for i in range(n):
+        x0, z0 = fpoc[i]
+        x1, z1 = fpoc[(i + 1) % n]
+
+        # Four corners of this wall quad
+        BL = [x0, 0.0,         z0]
+        BR = [x1, 0.0,         z1]
+        TR = [x1, wall_height, z1]
+        TL = [x0, wall_height, z0]
+
+        all_verts.extend([BL, BR, TR, TL])
+
+        # Front face (CCW from outside)
+        all_faces.append([vc,   vc+1, vc+2])
+        all_faces.append([vc,   vc+2, vc+3])
+        # Back face (reverse winding, so wall is visible from inside too)
+        all_faces.append([vc+2, vc+1, vc  ])
+        all_faces.append([vc+3, vc+2, vc  ])
+
+        vc += 4
+
+    vertices = np.array(all_verts, dtype=np.float32)
+    faces    = np.array(all_faces, dtype=np.int32)
+
+    wall_mesh = Mesh.from_faces(vertices=np.copy(vertices), faces=np.copy(faces), colors=color)
+
+    if with_trimesh:
+        tr_walls = trimesh.Trimesh(vertices=np.copy(vertices), faces=np.copy(faces), process=False)
+        tr_walls.visual.face_colors = np.tile(
+            [int(c * 255) for c in color] + [255], (faces.shape[0], 1)
+        )
+    else:
+        tr_walls = None
+
+    return wall_mesh, tr_walls
+
+
+def _build_furn_polys(translations, sizes, angles):
+    """Build 2D shapely Polygons for each furniture piece in the XZ plane."""
+    from shapely.geometry import Polygon
+    polys = []
+    if translations is None or len(translations) == 0:
+        return polys
+    for j in range(len(translations)):
+        tx, tz = float(translations[j, 0]), float(translations[j, 2])
+        sx = float(sizes[j, 0])   # half-extent X
+        sz = float(sizes[j, 2])   # half-extent Z
+        theta = float(angles[j]) if angles is not None else 0.0
+        corners = np.array([[-sx, -sz], [-sx, sz], [sx, sz], [sx, -sz]])
+        ca, sa = np.cos(theta), np.sin(theta)
+        R2 = np.array([[ca, -sa], [sa, ca]])
+        world = corners @ R2.T + np.array([tx, tz])
+        try:
+            poly = Polygon(world)
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+            if poly.is_valid and poly.area > 1e-6:
+                polys.append(poly)
+        except Exception:
+            pass
+    return polys
+
+
+def _door_swing_poly(hinge_xz, d_along, n_inward, door_width, door_open_angle, n_arc=20):
+    """Return a shapely Polygon for the door swing sector (arc fan in XZ)."""
+    from shapely.geometry import Polygon
+    pts = [tuple(hinge_xz)]
+    for k in range(n_arc + 1):
+        angle = np.deg2rad(door_open_angle * k / n_arc)
+        ca, sa = np.cos(angle), np.sin(angle)
+        swing_dir = ca * d_along + sa * n_inward
+        pts.append(tuple(hinge_xz + door_width * swing_dir))
+    try:
+        poly = Polygon(pts)
+        return poly.buffer(0) if not poly.is_valid else poly
+    except Exception:
+        return None
+
+
+def find_door_placement(fpoc, furn_polys, door_width=0.9, door_open_angle=60.0,
+                        margin=0.15, step=0.05):
+    """Slide a door opening along every wall edge and find the collision-free spot.
+
+    For each candidate hinge position, the door swing sector (fan of radius=door_width,
+    from wall-flush to door_open_angle degrees inward) is tested against every furniture
+    footprint polygon using shapely.  The position with minimum overlap area wins.
+
+    Args:
+        fpoc: (N, 2) XZ centroid-centered ordered polygon corners.
+        furn_polys: list of shapely Polygons for furniture footprints.
+        door_width: door opening width (metres).
+        door_open_angle: degrees door swings open into room.
+        margin: minimum distance (metres) between door jamb and wall corner.
+        step: scanning resolution along each edge (metres).
+
+    Returns:
+        (edge_idx, u_hinge, hinge_xz, d_along, n_inward)  — all numpy arrays/floats
+        or None if no feasible edge found.
+    """
+    n = fpoc.shape[0]
+    best_result = None
+    best_score = float('inf')
+
+    for i in range(n):
+        p0 = fpoc[i]
+        p1 = fpoc[(i + 1) % n]
+        edge_vec = p1 - p0
+        edge_len = float(np.linalg.norm(edge_vec))
+
+        if edge_len < door_width + 2 * margin:
+            continue
+
+        d = edge_vec / edge_len                    # unit vector along edge
+        n_in = np.array([-d[1], d[0]])             # perpendicular (one of two directions)
+        # Ensure n_in points toward room interior (toward centroid ≈ origin)
+        wall_mid = (p0 + p1) * 0.5
+        if np.dot(n_in, -wall_mid) < 0:
+            n_in = -n_in
+
+        u = margin
+        u_end = edge_len - door_width - margin
+        while u <= u_end + 1e-9:
+            hinge_xz = p0 + d * u
+            swing = _door_swing_poly(hinge_xz, d, n_in, door_width, door_open_angle)
+            if swing is None:
+                u += step
+                continue
+
+            score = 0.0
+            for fp in furn_polys:
+                try:
+                    if swing.intersects(fp):
+                        score += swing.intersection(fp).area
+                except Exception:
+                    pass
+
+            if score < best_score:
+                best_score = score
+                best_result = (i, u, hinge_xz.copy(), d.copy(), n_in.copy())
+
+            if score == 0.0:
+                break   # perfect spot on this edge — no need to scan further
+
+            u += step
+
+    return best_result, best_score
+
+
+def build_walls_with_door(
+        floor_plan_ordered_corners,
+        wall_height,
+        translations=None,
+        sizes=None,
+        angles=None,
+        wall_color=(0.94, 0.92, 0.88),
+        door_width=0.9,
+        door_height=2.0,
+        door_color=(0.55, 0.35, 0.15),
+        door_open_angle=60.0,
+        with_trimesh=False):
+    """Build double-sided walls with a collision-aware half-open door.
+
+    Args:
+        floor_plan_ordered_corners: (N, 2) XZ centroid-centered corners.
+        wall_height: float metres.
+        translations: (J, 3) ground-furniture world translations.
+        sizes: (J, 3) furniture half-extents.
+        angles: (J,) or (J,1) furniture rotation around Y.
+        wall_color, door_width, door_height, door_color, door_open_angle: see above.
+        with_trimesh: if True also return trimesh.Trimesh objects.
+
+    Returns:
+        wall_mesh, door_mesh, tr_walls, tr_door
+    """
+    fpoc = np.asarray(floor_plan_ordered_corners, dtype=np.float64)
+    n = fpoc.shape[0]
+
+    # Normalise angles to 1D
+    ang = None
+    if angles is not None:
+        ang = np.asarray(angles, dtype=np.float64).ravel()
+
+    # Build furniture 2D footprint polygons
+    furn_polys = _build_furn_polys(translations, sizes, ang)
+
+    # Find best door placement
+    placement, score = find_door_placement(
+        fpoc, furn_polys, door_width=door_width, door_open_angle=door_open_angle
+    )
+
+    # If no placement found (all edges too short), fall back to longest edge, center
+    if placement is None:
+        lengths = [np.linalg.norm(fpoc[(i + 1) % n] - fpoc[i]) for i in range(n)]
+        best_i = int(np.argmax(lengths))
+        p0 = fpoc[best_i]
+        p1 = fpoc[(best_i + 1) % n]
+        edge_vec = p1 - p0
+        edge_len = float(np.linalg.norm(edge_vec))
+        d = edge_vec / (edge_len + 1e-9)
+        n_in = np.array([-d[1], d[0]])
+        wall_mid = (p0 + p1) * 0.5
+        if np.dot(n_in, -wall_mid) < 0:
+            n_in = -n_in
+        u_hinge = (edge_len - door_width) * 0.5
+        hinge_xz = p0 + d * u_hinge
+        placement = (best_i, u_hinge, hinge_xz, d, n_in)
+
+    door_edge, u_hinge, hinge_xz, d_door, n_in_door = placement
+    dw = min(door_width, np.linalg.norm(fpoc[(door_edge + 1) % n] - fpoc[door_edge]) * 0.8)
+    dh = min(door_height, wall_height)
+
+    # ── Helpers ────────────────────────────────────────────────────────
+    all_verts, all_faces = [], []
+    vc = 0
+
+    def add_quad(bl, br, tr_, tl):
+        nonlocal vc
+        all_verts.extend([list(bl), list(br), list(tr_), list(tl)])
+        all_faces.extend([
+            [vc, vc+1, vc+2], [vc, vc+2, vc+3],
+            [vc+2, vc+1, vc], [vc+3, vc+2, vc],   # back face (double-sided)
+        ])
+        vc += 4
+
+    # ── Build per-edge wall geometry ───────────────────────────────────
+    for i in range(n):
+        x0, z0 = fpoc[i]
+        x1, z1 = fpoc[(i + 1) % n]
+        edge_vec = np.array([x1 - x0, z1 - z0])
+        edge_len = float(np.linalg.norm(edge_vec))
+
+        if i != door_edge:
+            add_quad([x0, 0.0, z0], [x1, 0.0, z1],
+                     [x1, wall_height, z1], [x0, wall_height, z0])
+            continue
+
+        # Wall with door cutout on this edge
+        d = edge_vec / (edge_len + 1e-9)
+        u0 = u_hinge                # left jamb position along edge
+        u1 = u_hinge + dw           # right jamb position along edge
+
+        def at(u, y):
+            return [x0 + d[0] * u, y, z0 + d[1] * u]
+
+        if u0 > 0.01:                       # left section
+            add_quad(at(0, 0), at(u0, 0), at(u0, wall_height), at(0, wall_height))
+        if wall_height > dh + 0.01:         # header above door opening
+            add_quad(at(u0, dh), at(u1, dh), at(u1, wall_height), at(u0, wall_height))
+        if u1 < edge_len - 0.01:            # right section
+            add_quad(at(u1, 0), at(edge_len, 0), at(edge_len, wall_height), at(u1, wall_height))
+
+    # ── Assemble wall mesh ─────────────────────────────────────────────
+    wv = np.array(all_verts, dtype=np.float32)
+    wf = np.array(all_faces,  dtype=np.int32)
+    wall_mesh = Mesh.from_faces(vertices=np.copy(wv), faces=np.copy(wf), colors=wall_color)
+
+    tr_walls = None
+    if with_trimesh:
+        tr_walls = trimesh.Trimesh(vertices=np.copy(wv), faces=np.copy(wf), process=False)
+        tr_walls.visual.face_colors = np.tile(
+            [int(c * 255) for c in wall_color] + [255], (wf.shape[0], 1))
+
+    # ── Door slab (half-open panel) ────────────────────────────────────
+    hx, hz = float(hinge_xz[0]), float(hinge_xz[1])
+    theta_open = np.deg2rad(door_open_angle)
+    ca, sa = np.cos(theta_open), np.sin(theta_open)
+    swing_dir = ca * d_door + sa * n_in_door
+    fx, fz = float(hinge_xz[0] + dw * swing_dir[0]), float(hinge_xz[1] + dw * swing_dir[1])
+
+    dv = np.array([[hx, 0.0, hz], [fx, 0.0, fz],
+                   [fx, dh,  fz], [hx, dh,  hz]], dtype=np.float32)
+    df = np.array([[0, 1, 2], [0, 2, 3],
+                   [2, 1, 0], [3, 2, 0]], dtype=np.int32)
+    door_mesh = Mesh.from_faces(vertices=dv, faces=df, colors=door_color)
+
+    tr_door = None
+    if with_trimesh:
+        tr_door = trimesh.Trimesh(vertices=np.copy(dv), faces=np.copy(df), process=False)
+        tr_door.visual.face_colors = np.tile(
+            [int(c * 255) for c in door_color] + [255], (df.shape[0], 1))
+
+    return wall_mesh, door_mesh, tr_walls, tr_door
+
+
 """ Furniture rednerable """
 
 def get_bbox_points(centroid, size, angle) -> np.ndarray:

@@ -182,7 +182,7 @@ _IDX_TO_LABEL_BEDROOM = {
     19: "tv_stand", 20: "wardrobe",
 }
 _TV_STAND_IDX = 19
-_BED_INDICES  = {8, 11, 15}  # double_bed, kids_bed, single_bed
+_BED_INDICES  = {8}  # double_bed, kids_bed, single_bed
 
 
 def compute_tv_bed_presence_reward(parsed_scene, ideal=3.0, sigma=1.0, **kwargs):
