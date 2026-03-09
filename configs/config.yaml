@@ -95,6 +95,9 @@ train:
   score_fn_training: false # whether to train the score function or not
   bpt: "default" # "custom" / anything else for default b2 paper's
   only_last_n_steps: -1 # if > 0, only train the last n steps
+  use_kl_div_loss: false  # if true, add KL regularizer loss against the frozen pretrained unet
+  rl_loss_weight: 10.0     # weight for the RL (PPO) loss term
+  kl_weight: 0.01         # weight for the KL regularizer loss term
 
 
 # Evaluation & Selection configuration

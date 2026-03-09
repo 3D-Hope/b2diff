@@ -24,7 +24,7 @@ tqdm = partial(tqdm_lib, dynamic_ncols=True)
 logger = get_logger(__name__)
 
 
-def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, pipeline=None, trainable_layers=None, training_timesteps=None):
+def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, pipeline=None, trainable_layers=None, training_timesteps=None, unet_copy=None):
     """
     Run the training phase for a given stage.
     
@@ -35,6 +35,7 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         wandb_run: Existing wandb run to log to (optional)
         pipeline: Pre-loaded StableDiffusionPipeline (avoids reloading)
         trainable_layers: Pre-initialized trainable layers
+        unet_copy: Frozen pretrained unet for KL regularization (optional)
         
     Returns:
         save_dir: Directory where checkpoints were saved
@@ -328,7 +329,33 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
                             1.0 - config.train.eps,
                             1.0 + config.train.eps,
                         )
-                        loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
+                        rl_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
+                        
+                        # KL regularizer against the frozen pretrained unet
+                        kl_regularizer_loss = None
+                        if getattr(config.train, 'use_kl_div_loss', False):
+                            assert unet_copy is not None, "unet_copy must be provided for KL regularization"
+                            with torch.no_grad():
+                                if config.train.cfg:
+                                    old_noise_pred = unet_copy(
+                                        torch.cat([sample["latents"][:, t]] * 2).detach(),
+                                        torch.cat([sample["timesteps"][:, t]] * 2).detach(),
+                                        embeds.detach(),
+                                    ).sample
+                                    old_noise_pred_uncond, old_noise_pred_text = old_noise_pred.chunk(2)
+                                    old_noise_pred = old_noise_pred_uncond + config.sample.guidance_scale * (
+                                        old_noise_pred_text - old_noise_pred_uncond
+                                    )
+                                else:
+                                    old_noise_pred = unet_copy(
+                                        sample["latents"][:, t].detach(),
+                                        sample["timesteps"][:, t].detach(),
+                                        embeds.detach(),
+                                    ).sample
+                            kl_regularizer_loss = (noise_pred - old_noise_pred) ** 2
+                            loss = config.train.rl_loss_weight * rl_loss + config.train.kl_weight * kl_regularizer_loss.mean()
+                        else:
+                            loss = rl_loss
                     
                     accelerator.backward(loss)
                     total_norm = None
@@ -363,6 +390,9 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
                             "train/approx_kl": approx_kl.cpu().item(),
                             "train/clipfrac": clipfrac.cpu().item(),
                         }
+                        if kl_regularizer_loss is not None:
+                            log_dict["train/kl_regularizer_loss"] = kl_regularizer_loss.mean().cpu().item()
+                            log_dict["train/rl_loss"] = rl_loss.cpu().item()
                         if grad_value is not None:
                             log_dict["train/grad_norm"] = grad_value
                         wandb_run.log(log_dict)

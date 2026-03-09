@@ -62,6 +62,7 @@ class TrainingPipeline:
         self.wandb_run = None
         self.pipeline = None  # Will hold the model pipeline
         self.trainable_layers = None  # Will hold trainable parameters
+        self.unet_copy = None  # Frozen pretrained unet copy for KL regularization
         # Note: Accelerator is NOT created here - will be created per-stage in training.py
         # because gradient_accumulation_steps depends on split_step which varies by stage
         
@@ -164,6 +165,14 @@ class TrainingPipeline:
         self.pipeline.vae.to(device, dtype=inference_dtype)
         self.pipeline.text_encoder.to(device, dtype=inference_dtype)
         
+         # Create frozen unet copy for KL regularization (never updated, no gradients)
+        if getattr(self.config.train, 'use_kl_div_loss', False):
+            import copy as _copy
+            self.unet_copy = _copy.deepcopy(self.pipeline.unet)
+            self.unet_copy.requires_grad_(False)
+            self.unet_copy.to(device)
+            logger.info("✓ Frozen unet_copy created for KL regularization")
+            
         if self.config.use_lora:
             self.pipeline.unet.to(device, dtype=inference_dtype)
             
@@ -189,6 +198,8 @@ class TrainingPipeline:
             self.trainable_layers = AttnProcsLayers(self.pipeline.unet.attn_processors)
         else:
             self.trainable_layers = self.pipeline.unet
+        
+       
         
         logger.info("✓ Model loaded and ready for all stages")
     
@@ -411,6 +422,7 @@ class TrainingPipeline:
                     pipeline=self.pipeline,
                     trainable_layers=self.trainable_layers,
                     training_timesteps=training_timestep_indices,
+                    unet_copy=self.unet_copy,
                 )
             logger.info(f"[{stage_idx}] Training completed")
             
