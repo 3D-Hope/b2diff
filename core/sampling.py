@@ -352,77 +352,79 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
 
         global_idx = len(total_fpbpn)
         local_idx  = 0
+        # Counter for per-sample pkl dirs; accounts for samples already saved in prior runs
+        _per_sample_counter = global_idx * config.sample.batch_size
 
         # ---- Load MiDiffusion datasets for ThreedFrontResults-compatible saving ----
-        # import sys as _sys
-        # _midiff_scripts_dir = os.path.join(
-        #     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        #     "3d_layout_generation", "MiDiffusion", "scripts"
-        # )
-        # if _midiff_scripts_dir not in _sys.path:
-        #     _sys.path.insert(0, _midiff_scripts_dir)
-        # from threed_front.evaluation import ThreedFrontResults
-        # from midiffusion.datasets.threed_front_encoding import get_dataset_raw_and_encoded as _get_ds_raw_enc
-        # from threed_front.datasets import get_raw_dataset as _get_raw_ds
+        import sys as _sys
+        _midiff_scripts_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "3d_layout_generation", "MiDiffusion", "scripts"
+        )
+        if _midiff_scripts_dir not in _sys.path:
+            _sys.path.insert(0, _midiff_scripts_dir)
+        from threed_front.evaluation import ThreedFrontResults
+        from midiffusion.datasets.threed_front_encoding import get_dataset_raw_and_encoded as _get_ds_raw_enc
+        from threed_front.datasets import get_raw_dataset as _get_raw_ds
 
-        # _midiff_cnf = _load_midiff_cfg(config.midiffusion.config_path)
-        # if "_eval" not in _midiff_cnf["data"]["encoding_type"]:
-        #     _midiff_cnf["data"]["encoding_type"] += "_eval"
-        # _data_cfg = _update_data_paths(_midiff_cnf["data"])
-        # print("[intermediate saving] Loading train/test datasets for ThreedFrontResults ...")
-        # _raw_train_ds = _get_raw_ds(
-        #     _data_cfg,
-        #     split=_midiff_cnf["training"].get("splits", ["train", "val"]),
-        #     include_room_mask=_midiff_cnf["network"].get("room_mask_condition", True),
-        # )
-        # _raw_test_ds, _enc_dataset = _get_ds_raw_enc(
-        #     _data_cfg,
-        #     split=_midiff_cnf["validation"].get("splits", ["test"]),
-        #     max_length=_midiff_cnf["network"]["sample_num_points"],
-        #     include_room_mask=_midiff_cnf["network"].get("room_mask_condition", True),
-        # )
-        # _n_obj_types = _enc_dataset.n_object_types
-        # print(f"[intermediate saving] Datasets loaded. n_object_types={_n_obj_types}")
+        _midiff_cnf = _load_midiff_cfg(config.midiffusion.config_path)
+        if "_eval" not in _midiff_cnf["data"]["encoding_type"]:
+            _midiff_cnf["data"]["encoding_type"] += "_eval"
+        _data_cfg = _update_data_paths(_midiff_cnf["data"])
+        print("[intermediate saving] Loading train/test datasets for ThreedFrontResults ...")
+        _raw_train_ds = _get_raw_ds(
+            _data_cfg,
+            split=_midiff_cnf["training"].get("splits", ["train", "val"]),
+            include_room_mask=_midiff_cnf["network"].get("room_mask_condition", True),
+        )
+        _raw_test_ds, _enc_dataset = _get_ds_raw_enc(
+            _data_cfg,
+            split=_midiff_cnf["validation"].get("splits", ["test"]),
+            max_length=_midiff_cnf["network"]["sample_num_points"],
+            include_room_mask=_midiff_cnf["network"].get("room_mask_condition", True),
+        )
+        _n_obj_types = _enc_dataset.n_object_types
+        print(f"[intermediate saving] Datasets loaded. n_object_types={_n_obj_types}")
 
-        # def _delete_empty_from_x0(x0_batch, n_object_types):
-        #     """Convert (B, N, 30) raw x0 tensor → list[B] of layout dicts
-        #     with empty objects removed (same logic as ashok_generate_results.py)."""
-        #     bbox_dim   = 8
-        #     class_dim  = x0_batch.shape[-1] - bbox_dim
-        #     N          = x0_batch.shape[1]
-        #     translations = x0_batch[..., 0:3]
-        #     sizes        = x0_batch[..., 3:6]
-        #     angles       = x0_batch[..., 6:8]   # [cos θ, sin θ]
-        #     class_raw    = x0_batch[..., bbox_dim:]
-        #     class_scores = class_raw[..., :n_object_types]
-        #     obj_max, obj_max_ind = torch.max(class_scores, dim=-1)
-        #     empty_logit  = class_raw[..., class_dim - 1]
-        #     is_empty     = empty_logit > obj_max
-        #     class_onehot = torch.nn.functional.one_hot(
-        #         obj_max_ind, num_classes=n_object_types
-        #     ).float()
-        #     B_loc = x0_batch.shape[0]
-        #     boxes_list = []
-        #     for b_loc in range(B_loc):
-        #         box = {
-        #             "translations": torch.zeros(1, 0, 3),
-        #             "sizes":        torch.zeros(1, 0, 3),
-        #             "angles":       torch.zeros(1, 0, 2),
-        #             "class_labels": torch.zeros(1, 0, n_object_types),
-        #         }
-        #         for i in range(N):
-        #             if is_empty[b_loc, i]:
-        #                 continue
-        #             box["translations"] = torch.cat(
-        #                 [box["translations"], translations[b_loc:b_loc+1, i:i+1, :].cpu()], dim=1)
-        #             box["sizes"]        = torch.cat(
-        #                 [box["sizes"],        sizes[b_loc:b_loc+1, i:i+1, :].cpu()],        dim=1)
-        #             box["angles"]       = torch.cat(
-        #                 [box["angles"],       angles[b_loc:b_loc+1, i:i+1, :].cpu()],       dim=1)
-        #             box["class_labels"] = torch.cat(
-        #                 [box["class_labels"], class_onehot[b_loc:b_loc+1, i:i+1, :].cpu()], dim=1)
-        #         boxes_list.append(box)
-        #     return boxes_list
+        def _delete_empty_from_x0(x0_batch, n_object_types):
+            """Convert (B, N, 30) raw x0 tensor → list[B] of layout dicts
+            with empty objects removed (same logic as ashok_generate_results.py)."""
+            bbox_dim   = 8
+            class_dim  = x0_batch.shape[-1] - bbox_dim
+            N          = x0_batch.shape[1]
+            translations = x0_batch[..., 0:3]
+            sizes        = x0_batch[..., 3:6]
+            angles       = x0_batch[..., 6:8]   # [cos θ, sin θ]
+            class_raw    = x0_batch[..., bbox_dim:]
+            class_scores = class_raw[..., :n_object_types]
+            obj_max, obj_max_ind = torch.max(class_scores, dim=-1)
+            empty_logit  = class_raw[..., class_dim - 1]
+            is_empty     = empty_logit > obj_max
+            class_onehot = torch.nn.functional.one_hot(
+                obj_max_ind, num_classes=n_object_types
+            ).float()
+            B_loc = x0_batch.shape[0]
+            boxes_list = []
+            for b_loc in range(B_loc):
+                box = {
+                    "translations": torch.zeros(1, 0, 3),
+                    "sizes":        torch.zeros(1, 0, 3),
+                    "angles":       torch.zeros(1, 0, 2),
+                    "class_labels": torch.zeros(1, 0, n_object_types),
+                }
+                for i in range(N):
+                    if is_empty[b_loc, i]:
+                        continue
+                    box["translations"] = torch.cat(
+                        [box["translations"], translations[b_loc:b_loc+1, i:i+1, :].cpu()], dim=1)
+                    box["sizes"]        = torch.cat(
+                        [box["sizes"],        sizes[b_loc:b_loc+1, i:i+1, :].cpu()],        dim=1)
+                    box["angles"]       = torch.cat(
+                        [box["angles"],       angles[b_loc:b_loc+1, i:i+1, :].cpu()],       dim=1)
+                    box["class_labels"] = torch.cat(
+                        [box["class_labels"], class_onehot[b_loc:b_loc+1, i:i+1, :].cpu()], dim=1)
+                boxes_list.append(box)
+            return boxes_list
 
         for idx in tqdm(
             range(config.sample.num_batches_per_epoch),
@@ -452,9 +454,11 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
                 noise_list  = [x_noise] + [torch.randn_like(x_noise) for _ in range(branch_num - 1)]
                 scenes      = [[n] for n in noise_list]
                 log_probs   = [[] for _ in range(branch_num)]
+                pred_x0s    = [[] for _ in range(branch_num)]
             else:
                 scenes    = [[x_noise]]
                 log_probs = [[]]
+                pred_x0s  = [[]]
 
             for i, t in tqdm(
                 enumerate(ts),
@@ -470,17 +474,19 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
                             cur_num    = len(scenes)
                             scenes    = [[s for s in scenes[k // branch_num]] for k in range(cur_num * branch_num)]
                             log_probs = [[lp for lp in log_probs[k // branch_num]] for k in range(cur_num * branch_num)]
+                            pred_x0s  = [[p for p in pred_x0s[k // branch_num]] for k in range(cur_num * branch_num)]
 
                         for k in range(len(scenes)):
                             x_t     = scenes[k][i]
                             t_batch = t.expand(config.sample.batch_size)  # (B,)
                             noise_pred = pipeline.predict_noise(x_t, t_batch, fpbpn_batch)
                             # ddim_step_with_logprob is shape-agnostic; works on (B, N, C)
-                            x_prev, log_prob, _ = ddim_step_with_logprob(
+                            x_prev, log_prob, x0 = ddim_step_with_logprob(
                                 ddim_3d, noise_pred, t, x_t, **extra_step_kwargs
                             )
                             scenes[k].append(x_prev)
                             log_probs[k].append(log_prob)
+                            pred_x0s[k].append(x0)
 
             sample_num = len(scenes)
             total_fpbpn.extend([batch_indices] * sample_num)
@@ -488,6 +494,7 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
             for k in range(sample_num):
                 store_scenes    = torch.stack(scenes[k], dim=1)     # (B, T+1, N, C)
                 store_log_probs = torch.stack(log_probs[k], dim=1)  # (B, T)
+                store_pred_x0s  = torch.stack(pred_x0s[k], dim=1)  # (B, T, N, C)
                 timesteps_rep   = ts.unsqueeze(0).expand(config.sample.batch_size, -1)  # (B, T)
 
                 samples.append({
@@ -497,6 +504,45 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
                     "scenes":      store_scenes[:, :-1].cpu().detach(),   # (B, T, N, C)
                     "next_scenes": store_scenes[:, 1:].cpu().detach(),   # (B, T, N, C)
                 })
+
+                # ----------------------------------------------------------
+                # Per-sample trajectory saving (gated by config flag)
+                # Saves one pkl per sample b[i] in its own directory.
+                # Each pkl contains the full noise→final trajectory,
+                # the post-processed final layout, and a ThreedFrontResults
+                # with the correct floor-plan dataset index for that sample.
+                # ----------------------------------------------------------
+                if getattr(config.sample, 'save_per_sample_trajectories', False):
+                    B_cur  = config.sample.batch_size
+                    T_steps = store_pred_x0s.shape[1]  # number of DDIM steps
+                    for b in range(B_cur):
+                        _sample_dir = os.path.join(save_dir, f"sample_{_per_sample_counter:05d}")
+                        os.makedirs(_sample_dir, exist_ok=True)
+
+                        fpbpn_idx_b = batch_indices[b]
+
+                        # Build one ThreedFrontResults entry per timestep.
+                        # Each entry is the post-processed pred-x0 at that DDIM step,
+                        # all sharing the same floor-plan index (same room, different noise levels).
+                        all_step_layouts = []
+                        for t_idx in range(T_steps):
+                            x0_t    = store_pred_x0s[b:b+1, t_idx].float()  # (1, N, C)
+                            boxes_t = _delete_empty_from_x0(x0_t, _n_obj_types)
+                            proc_t  = _enc_dataset.post_process(boxes_t[0])
+                            lay_t   = {key: val.numpy()[0] for key, val in proc_t.items()}
+                            all_step_layouts.append(lay_t)
+
+                        # scene_indices repeated T times – same floor plan at every step
+                        result_b = ThreedFrontResults(
+                            _raw_train_ds, _raw_test_ds, _midiff_cnf,
+                            scene_indices=[fpbpn_idx_b] * T_steps,
+                            predicted_layouts=all_step_layouts,
+                        )
+
+                        with open(os.path.join(_sample_dir, 'result.pkl'), 'wb') as _pf:
+                            pickle.dump(result_b, _pf)
+
+                        _per_sample_counter += 1
 
             if (idx + 1) % config.sample.save_interval == 0 or idx == (config.sample.num_batches_per_epoch - 1):
                 keys = ["fpbpn", "timesteps", "log_probs", "scenes", "next_scenes"]
@@ -517,40 +563,40 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
         # ---------------------------------------------------------------
         # Save final scenes as ThreedFrontResults for rendering
         # ---------------------------------------------------------------
-        # if getattr(config.sample, 'save_train_samples_no_train', False):
-        #     print("[save_train_samples_no_train] Building ThreedFrontResults from final scenes …")
+        if getattr(config.sample, 'save_train_samples_no_train', False):
+            print("[save_train_samples_no_train] Building ThreedFrontResults from final scenes …")
 
-        #     all_sampled_indices = []
-        #     all_layouts         = []
+            all_sampled_indices = []
+            all_layouts         = []
 
-        #     # `samples` has one dict per (batch, branch-k) appended in order.
-        #     # `total_fpbpn[global_idx + j]` gives the B floor-plan indices for samples[j].
-        #     for sample_j, batch_s in enumerate(samples):
-        #         # Final fully-denoised scenes: (B, N, C)
-        #         final_scenes_batch  = batch_s["next_scenes"][:, -1].float()
-        #         B_cur               = final_scenes_batch.shape[0]
-        #         fpbpn_batch_indices = total_fpbpn[global_idx + sample_j]
+            # `samples` has one dict per (batch, branch-k) appended in order.
+            # `total_fpbpn[global_idx + j]` gives the B floor-plan indices for samples[j].
+            for sample_j, batch_s in enumerate(samples):
+                # Final fully-denoised scenes: (B, N, C)
+                final_scenes_batch  = batch_s["next_scenes"][:, -1].float()
+                B_cur               = final_scenes_batch.shape[0]
+                fpbpn_batch_indices = total_fpbpn[global_idx + sample_j]
 
-        #         boxes_list = _delete_empty_from_x0(final_scenes_batch, _n_obj_types)
-        #         for b_loc in range(B_cur):
-        #             fpbpn_idx = fpbpn_batch_indices[b_loc]
-        #             bbox_dict = boxes_list[b_loc]
-        #             processed = _enc_dataset.post_process(bbox_dict)
-        #             all_layouts.append({k: v.numpy()[0] for k, v in processed.items()})
-        #             all_sampled_indices.append(fpbpn_idx)
+                boxes_list = _delete_empty_from_x0(final_scenes_batch, _n_obj_types)
+                for b_loc in range(B_cur):
+                    fpbpn_idx = fpbpn_batch_indices[b_loc]
+                    bbox_dict = boxes_list[b_loc]
+                    processed = _enc_dataset.post_process(bbox_dict)
+                    all_layouts.append({k: v.numpy()[0] for k, v in processed.items()})
+                    all_sampled_indices.append(fpbpn_idx)
 
-        #     result = ThreedFrontResults(
-        #         _raw_train_ds, _raw_test_ds, _midiff_cnf,
-        #         all_sampled_indices, all_layouts,
-        #     )
-        #     out_path = os.path.join(save_dir, 'final_best_samples.pkl')
-        #     with open(out_path, 'wb') as _pf:
-        #         pickle.dump(result, _pf)
-        #     print(f"[save_train_samples_no_train] Saved {len(all_layouts)} layouts → {out_path}")
-        #     if logger:
-        #         logger.info(
-        #             f"[save_train_samples_no_train] Saved {len(all_layouts)} layouts → {out_path}"
-        #         )
+            result = ThreedFrontResults(
+                _raw_train_ds, _raw_test_ds, _midiff_cnf,
+                all_sampled_indices, all_layouts,
+            )
+            out_path = os.path.join(save_dir, 'final_best_samples.pkl')
+            with open(out_path, 'wb') as _pf:
+                pickle.dump(result, _pf)
+            print(f"[save_train_samples_no_train] Saved {len(all_layouts)} layouts → {out_path}")
+            if logger:
+                logger.info(
+                    f"[save_train_samples_no_train] Saved {len(all_layouts)} layouts → {out_path}"
+                )
 
         if wandb_run:
             wandb_run.log({

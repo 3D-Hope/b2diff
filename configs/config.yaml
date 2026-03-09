@@ -137,6 +137,7 @@ sample:
   always_branch_at: -1
   fk_then_branch_at: -1
   save_train_samples_no_train: false # whether to save the samples generated in the sampling stage without training or not (for visualization)
+  save_per_sample_trajectories: false # save one pkl per sample with full noise→final trajectory + ThreedFrontResults
 # Training configuration
 train:
   batch_size: 16
