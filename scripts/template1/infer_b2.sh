@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=template1_b2_kl
-#SBATCH --partition=bat37
+#SBATCH --partition=batch
 #SBATCH --constraint=zone-msp3
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
