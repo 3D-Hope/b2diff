@@ -1,8 +1,3 @@
-"""
-Core selection module for B2Diff training pipeline.
-Extracts the selection logic from run_select.py into a callable function.
-"""
-
 import os
 import torch
 import pickle
@@ -396,7 +391,7 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
         for b in range(batch_size):
             cur_sample_num = 1
             
-            # CRITICAL FIX: For FK mode, extract consecutive chunks (particles from same prompt)
+            # For FK mode, extract consecutive chunks (particles from same prompt), because samples are stored differently than that of sampling.py
             # Instead of interleaved extraction
             if config.sample.fk:
                 start_idx = b * fk_particles
@@ -406,14 +401,13 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
                     for k, v in samples.items()
                 }
             else:
-                # Original logic for branching mode (interleaved extraction)
                 batch_samples = {
                     k: v[torch.arange(b, total_batch_size, batch_size)] 
                     for k, v in samples.items()
                 }
             
             # When incremental training is enabled, keep the full trajectory
-            # Otherwise, preserve original behavior (use last `split_step` timesteps)
+            # Otherwise, keep last `split_step` timesteps
             if (hasattr(config, 'train') and (getattr(config.train, 'incremental_training', False))) or config.sample.fk:
                 t_left = 0
                 t_right = config.sample.num_steps
@@ -424,7 +418,6 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
             if config.train.only_last_n_steps > 0:
                 t_left = config.sample.num_steps - config.train.only_last_n_steps
 
-            # print(f"{data_size=}, {cur_sample_num=}, {total_batch_size=}")
             
             # Extract data for this prompt's particles
             prompt_embeds = batch_samples['prompt_embeds'][torch.arange(0, data_size, cur_sample_num)]
@@ -472,7 +465,6 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
                                 used_idx_2 = j * config.split_time + used_idx
                         else:
                             continue
-                        # continue
                     
                     data['prompt_embeds'].append(prompt_embeds[used_idx_2])
                     data['timesteps'].append(timesteps[used_idx_2])
@@ -485,10 +477,6 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
             if not config.sample.fk:
                 cur_sample_num *= config.split_time
     
-    # Stack data if any samples were selected
-    # if config.sample.fk:
-    #     if logger:
-    #         logger.info(f"Selected {len(data['prompt_embeds'])} samples (FK sampling - all kept)")
     if len(data['prompt_embeds']) > 0:
         # Only stack if items are lists (not already tensors)
         first_value = next(iter(data.values()))
@@ -507,7 +495,6 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
         pickle.dump(data, f)
     
     # Calculate mean reward of ALL generated samples (before selection)
-    # IMPORTANT: Use raw CLIP scores for reward tracking (not normalized), to match paper's plot
     all_samples_mean_reward = float(raw_clip_scores.mean())
     all_samples_std_reward = float(raw_clip_scores.std())
     num_reward_queries = len(raw_clip_scores)
@@ -527,7 +514,6 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
         pickle.dump(cumulative_reward_queries, f)
     
     # Prepare clean metrics for aggregation at pipeline level
-    # Return metrics WITHOUT per-stage prefixes - pipeline will handle aggregation
     print(f"dtype of eval_scores: {data.get('eval_scores', torch.tensor([])).dtype}")
     num_selected = len(data.get('prompt_embeds', []))
     num_positive = int((data.get('eval_scores', torch.tensor([])) >= config.eval.pos_threshold).sum()) if len(data.get('eval_scores', [])) > 0 else 0

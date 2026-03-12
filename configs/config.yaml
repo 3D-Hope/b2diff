@@ -1,10 +1,7 @@
-# Main configuration file for B2Diff training pipeline
-# This replaces the bash script configuration with a Hydra-based approach
-
+# config for image generation
 defaults:
   - _self_
 
-# General settings
 exp_name: "incremental_b2diffu_rl"
 seed: 42
 save_path: "./model/lora"
@@ -14,7 +11,7 @@ use_lora: true
 resume_id: "" #wandb run id to resume from
 dev_id: 0
 
-# Pipeline settings (from bash script)
+
 pipeline:
   continue_from_stage: 0
   stage_cnt: 100
@@ -23,7 +20,7 @@ pipeline:
   save_interval: 2
   sleep_between_stages: 2
 
-# Split settings (will be calculated per stage)
+# Split settings (will be calculated per stage) for b2diffu-rl method
 split_step: 14
 split_time: 3
 
@@ -40,7 +37,7 @@ pretrained:
 
 # Sampling configuration
 sample:
-  num_steps: 20
+  num_steps: 20 # total number of denoising steps T
   cfg: true
   guidance_scale: 5.0
   beta: 1.0
@@ -64,11 +61,11 @@ sample:
   always_branch_at: -1
   fk_then_branch_at: -1
   save_train_samples_no_train: false # whether to save the samples generated in the sampling stage without training or not (for visualization)
-# Training configuration
+
 train:
   batch_size: 16
   use_8bit_adam: false
-  learning_rate: 3e-4 # 0.0001 in b2 but 3e-4 in ddpo
+  learning_rate: 3e-4
   adam_beta1: 0.9
   adam_beta2: 0.999
   adam_weight_decay: 0.0001
@@ -82,21 +79,20 @@ train:
   beta: 0
   beta1: 1
   beta2: 1
-  eps: 1e-4 # 0.1 in b2 but 1e-4 in ddpo
+  eps: 1e-4
   num_epochs: 2
   adv_clip_max: 5
   save_interval: 2
   num_checkpoint_limit: 21
-  incremental_training: false # incremental training but the random timesteps in each loop
+  incremental_training: false
   only_train_steps: -1 # if paired with incremental_training, any n timesteps training
-  uniformly_sample_timesteps: false # if true, sample the timesteps uniformly instead of choosing randomly
+  uniformly_sample_timesteps: false # if if paired with incremental_training, sample the timesteps uniformly instead of choosing randomly
   incremental_timesteps: [5,10,15,20]
   num_stages_per_increment: 10
-  score_fn_training: false # whether to train the score function or not
   bpt: "default" # "custom" / anything else for default b2 paper's
   only_last_n_steps: -1 # if > 0, only train the last n steps
   use_kl_div_loss: false  # if true, add KL regularizer loss against the frozen pretrained unet
-  rl_loss_weight: 10.0     # weight for the RL (PPO) loss term
+  rl_loss_weight: 10.0     # weight for the RL (PPO) loss term, only used when use_kl_div_loss is true
   kl_weight: 0.01         # weight for the KL regularizer loss term
 
 
@@ -106,21 +102,12 @@ eval:
   neg_threshold: -0.5  # NegThreshold from bash script
   history_cnt: 8  # History_Cnt from bash script
 
-# Wandb configuration
-# Single run tracks all stages with hierarchical logging:
-# - stage/index, stage/time_seconds
-# - sampling/stage_X/* (per-stage sampling metrics)
-# - rewards/stage_X/* (raw & normalized scores, mean/std per prompt)
-# - selection/stage_X/* (num selected, pos/neg counts)
-# - training/stage_X/* (loss, gradients per stage)
-# - pipeline/* (overall progress, total time)
 wandb:
   entity: "pramish-paudel-insait"
-  project: "b2diff"  # Single run for entire pipeline
+  project: "iADD"
   enabled: true
   log_model: false
 
-# Hydra configuration
 hydra:
   run:
     dir: logs/${exp_name}/${now:%Y-%m-%d_%H-%M-%S}

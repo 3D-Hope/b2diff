@@ -1,8 +1,3 @@
-"""
-Core sampling module for B2Diff training pipeline.
-Extracts the sampling logic from run_sample.py into a callable function.
-"""
-
 import os
 import sys
 import torch
@@ -40,12 +35,7 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
     Returns:
         save_dir: Directory where samples were saved
     """
-    # Convert OmegaConf to dict if needed
-    if hasattr(config, 'to_dict'):
-        config_dict = config.to_dict()
-    else:
-        config_dict = config
-        
+
     if logger:
         logger.info(f"Starting sampling for stage {stage_idx}")
     else:
@@ -78,15 +68,6 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
         project_config=accelerator_config
     )
     
-    # IMPORTANT: Do NOT use log_with="wandb" - it tries to init its own run
-    # All logging goes through the parent pipeline's wandb_run
-    
-    # # Setup inference dtype
-    # inference_dtype = torch.float32
-    # if accelerator.mixed_precision == "fp16":
-    #     inference_dtype = torch.float16
-    # elif accelerator.mixed_precision == "bf16":
-    #     inference_dtype = torch.bfloat16
     def save_model_hook(models, weights, output_dir):
         assert len(models) == 1
         if config.use_lora and isinstance(models[0], AttnProcsLayers):
@@ -174,7 +155,6 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
     # Set seed
     seed_everything(config.seed)
     
-    # SAMPLING LOOP
     pipeline.unet.eval()
     samples = []
     if config.sample.always_branch_at > 0:

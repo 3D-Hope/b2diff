@@ -1,8 +1,3 @@
-"""
-Core sampling module for B2Diff training pipeline.
-Extracts the sampling logic from run_sample.py into a callable function.
-"""
-
 import os
 import sys
 import torch
@@ -43,12 +38,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
     Returns:
         save_dir: Directory where samples were saved
     """
-    # Convert OmegaConf to dict if needed
-    if hasattr(config, 'to_dict'):
-        config_dict = config.to_dict()
-    else:
-        config_dict = config
-        
     if logger:
         logger.info(f"Starting sampling for stage {stage_idx}")
     else:
@@ -60,7 +49,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
     unique_id = config.exp_name
     os.makedirs(os.path.join(config.save_path, unique_id), exist_ok=True)
     
-    # Use stage index for directory, not run_name
     stage_id = f"stage{stage_idx}"
     save_dir = os.path.join(config.save_path, unique_id, stage_id)
     os.makedirs(save_dir, exist_ok=True)
@@ -69,7 +57,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
     if config.sample.fk:
         os.makedirs(os.path.join(save_dir, 'tmp_images'), exist_ok=True)
     
-    # Use pre-loaded pipeline (no loading!)
     if pipeline is None:
         raise ValueError("Pipeline must be provided - should not reload model each stage!")
     
@@ -85,15 +72,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
         project_config=accelerator_config
     )
     
-    # IMPORTANT: Do NOT use log_with="wandb" - it tries to init its own run
-    # All logging goes through the parent pipeline's wandb_run
-    
-    # # Setup inference dtype
-    # inference_dtype = torch.float32
-    # if accelerator.mixed_precision == "fp16":
-    #     inference_dtype = torch.float16
-    # elif accelerator.mixed_precision == "bf16":
-    #     inference_dtype = torch.bfloat16
     def save_model_hook(models, weights, output_dir):
         assert len(models) == 1
         if config.use_lora and isinstance(models[0], AttnProcsLayers):
@@ -164,7 +142,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
     if config.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
     
-    # Generate negative prompt embeddings
+    # Generate negative prompt embeddings, its just used for inferring the dtype, sampling loop will repeat it to correct shape
     neg_prompt_embed = pipeline.text_encoder(
         pipeline.tokenizer(
             [""],
@@ -209,8 +187,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
         num_particles = target_num_particles
         particle_multiplier = final_particle_multiplier
     
-    # Note: sample_neg_prompt_embeds will be created inside the batch loop
-    # to avoid shape issues when branching occurs
         
     # Load existing prompts and samples if available
     if os.path.exists(os.path.join(save_dir, 'prompt.json')):
@@ -275,12 +251,12 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
             reward_fn_with_clip = score_fn1
     
     fkd = FKD(
-        potential_type=config.sample.potential_type, # "max"
+        potential_type=config.sample.potential_type,
         lmbda=config.sample.fk_lambda,
         num_particles=target_num_particles,
         adaptive_resampling=False,
-        resample_frequency=config.sample.resample_frequency, # 5
-        resampling_t_start=config.sample.resampling_t_start, # 5
+        resample_frequency=config.sample.resample_frequency,
+        resampling_t_start=config.sample.resampling_t_start,
         resampling_t_end=config.sample.resampling_t_end,
         time_steps=config.sample.num_steps,
         reward_fn=reward_fn_with_clip,
@@ -298,8 +274,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
         fk_num_splits = config.split_time
         assert config.sample.fk, "fk_then_branch_at requires FK sampling to be enabled"
         
-    # Main sampling loop
-    # Main sampling loop
+
     for idx in tqdm(
         range(config.sample.num_batches_per_epoch),
         disable=not accelerator.is_local_main_process,
@@ -316,8 +291,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
             num_particles = target_num_particles
             particle_multiplier = final_particle_multiplier
         
-        # Create sample_neg_prompt_embeds for this batch
-        # This ensures correct shape even when branching occurs
         if config.sample.fk:
             sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.batch_size * num_particles * particle_multiplier, 1, 1)
         else:
@@ -501,7 +474,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                 branch_now = i == fk_select_index
                                 if branch_now:
                                     # Initialize new history lists for branching
-                                    # CRITICAL: len(latents[k]) == len(log_probs[k]) = number of past timesteps
                                     new_latents_history = [[] for _ in range(len(latents[k]))]
                                     new_log_probs_history = [[] for _ in range(len(log_probs[k]))]
 
@@ -529,7 +501,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                         )
 
                                         if resample_indices is not None:
-                                            # CRITICAL: Remap BOTH latents and log_probs history with same indices
                                             for past_t in range(len(latents[k])):
                                                 past_latents = latents[k][past_t][start_idx:end_idx]
                                                 resampled_past = past_latents[resample_indices]
@@ -539,7 +510,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                                 else:
                                                     latents[k][past_t][start_idx:end_idx] = resampled_past
 
-                                            # PARALLEL LOG_PROB REMAPPING: Use same resample_indices
                                             for past_t in range(len(log_probs[k])):
                                                 past_log_probs = log_probs[k][past_t][start_idx:end_idx]
                                                 resampled_past_lp = past_log_probs[resample_indices]  # Same indices
@@ -552,7 +522,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                                     log_probs[k][past_t][start_idx:end_idx] = resampled_past_lp
                                         elif branch_now:
                                             # No resampling happened, but still branching: select index 0 from current particles
-                                            # CRITICAL: Both latents and log_probs select same particles to maintain consistency
                                             for past_t in range(len(latents[k])):
                                                 past_latents = latents[k][past_t][start_idx:end_idx]
                                                 selected_past = past_latents[0:1].repeat(fk_num_splits, 1, 1, 1)
@@ -579,10 +548,8 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                 # Concatenate current timestep results across all prompts
                                 latents_t_1 = torch.cat(all_resampled_latents, dim=0)
                                 log_prob = torch.cat(all_selected_log_probs, dim=0)
-                                # CONSISTENCY CHECK: both should have shape (total_particles,) and (total_particles, channels, h, w)
 
                                 if branch_now:
-                                    # CRITICAL: Replace all past history with branched selected particles
                                     # Concatenate accumulated history from all prompts
                                     for past_t in range(len(latents[k])):
                                         latents[k][past_t] = torch.cat(new_latents_history[past_t], dim=0)
@@ -590,9 +557,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                     # PARALLEL LOG_PROB UPDATE: Must match latents history exactly
                                     for past_t in range(len(log_probs[k])):
                                         log_probs[k][past_t] = torch.cat(new_log_probs_history[past_t], dim=0)
-                                    
-                                    # Verification: shapes should match
-                                    # latents[k][past_t].shape[0] == log_probs[k][past_t].shape[0] for all past_t
 
                                     base_prompts = [
                                         prompts1[p * particles_per_prompt]
@@ -618,7 +582,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                 particles_per_prompt = num_particles * particle_multiplier
                                 
                                 for b in range(len(prompts1) // particles_per_prompt):
-                                    # CRITICAL: Reset FKD state for each new prompt
                                     fkd.reset_state()
                                     # Extract latents and log_probs for this specific prompt's particles
                                     start_idx = b * particles_per_prompt
@@ -643,7 +606,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                             get_best_indices=True
                                         )
                                         
-                                        # CRITICAL: Resample historical trajectory if resampling occurred
                                         if best_indices is not None:
                                             for past_t in range(len(latents[k])):
                                                 past_latents = latents[k][past_t][start_idx:end_idx]
@@ -679,7 +641,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                             get_best_indices=True
                                         )
                                         
-                                        # CRITICAL: Resample historical trajectory for best particles if resampling occurred
                                         if best_indices is not None:
                                             for past_t in range(len(latents[k])):
                                                 past_latents = latents[k][past_t][start_idx:mid_idx]
@@ -691,7 +652,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                                 resampled_past_lp = past_log_probs[best_indices]
                                                 log_probs[k][past_t][start_idx:mid_idx] = resampled_past_lp
                                         
-                                        # CRITICAL: Reset FKD state before processing worst particles
                                         # to prevent using best particles' state for worst particles
                                         fkd.reset_state()
                                         
@@ -713,7 +673,6 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                                             get_best_indices=False
                                         )
                                         
-                                        # CRITICAL: Resample historical trajectory for worst particles if resampling occurred
                                         if worst_indices is not None:
                                             for past_t in range(len(latents[k])):
                                                 past_latents = latents[k][past_t][mid_idx:end_idx]
@@ -763,14 +722,9 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                 }
             )
 
-        # if idx==0:
-        #     for k,v in samples[0].items():
-        #         print(k, v.shape)
-
         if (idx+1)%config.sample.save_interval ==0 or idx==(config.sample.num_batches_per_epoch-1):
             os.makedirs(os.path.join(save_dir, "images/"), exist_ok=True)
             print(f'-----------{accelerator.process_index} save image start-----------')
-            # print(samples)
             new_samples = {k: torch.cat([s[k] for s in samples]) for k in samples[0].keys()}
             images = new_samples['images'][local_idx:]
             for j, image in enumerate(images):

@@ -1,20 +1,3 @@
-"""
-Main training pipeline orchestrator for B2Diff.
-This replaces the bash script training loop with a Python implementation using Hydra.
-
-Features:
-- Hydra-based configuration management
-- Proper wandb logging at pipeline level
-- Debugger-friendly structure
-- Exception handling and progress tracking
-- Calls sample/select/train as functions instead of subprocess calls
-
-Usage:
-    python train_pipeline.py
-    python train_pipeline.py pipeline.continue_from_stage=10
-    python train_pipeline.py --config-name config exp_name=my_experiment
-"""
-
 import os
 import sys
 import time
@@ -36,7 +19,6 @@ from core.fk_sampling import run_fk_sampling
 from core.mixed_sampling import run_mixed_sampling
 from core.selection import run_selection
 from core.training import run_training
-from core.score_fn_training import run_score_fn_training
 
 # Setup logging
 logging.basicConfig(
@@ -60,12 +42,10 @@ class TrainingPipeline:
         self.start_time = time.time()
         self.stage_times = []
         self.wandb_run = None
-        self.pipeline = None  # Will hold the model pipeline
-        self.trainable_layers = None  # Will hold trainable parameters
+        self.pipeline = None
+        self.trainable_layers = None
         self.unet_copy = None  # Frozen pretrained unet copy for KL regularization
-        # Note: Accelerator is NOT created here - will be created per-stage in training.py
-        # because gradient_accumulation_steps depends on split_step which varies by stage
-        
+
         # Metrics aggregation for progression curves across ALL stages
         self.metrics_history = {
             'stages': [],  # Stage indices
@@ -214,7 +194,7 @@ class TrainingPipeline:
         Returns:
             cur_split_step: Calculated split step value
         """
-        if self.config.train.bpt == "custom": #TODO: make this configurable
+        if self.config.train.bpt == "custom":
             interval = 20 - 10
             level = (stage_idx * interval) // 100
             cur_split_step = min(20,(level +1)*4)
@@ -238,7 +218,7 @@ class TrainingPipeline:
         # Create a copy of the config
         stage_config = OmegaConf.create(OmegaConf.to_container(self.config, resolve=True))
         
-        # Update stage-specific values (NOT run_name - we use one run for all)
+        # Update stage-specific values
         stage_config.split_step = self.calculate_split_step(stage_idx)
         stage_config.seed = self.config.seed + stage_idx
         
@@ -407,23 +387,15 @@ class TrainingPipeline:
             
             # Step 3: Training
             logger.info(f"[{stage_idx}] Running training...")
-            if self.config.train.score_fn_training:
-                save_dir = run_score_fn_training(
-                    stage_config, stage_idx, logger, 
-                    wandb_run=self.wandb_run,
-                    pipeline=self.pipeline,
-                    trainable_layers=self.trainable_layers,
-                    training_timesteps=training_timestep_indices,
-                )
-            else:
-                save_dir = run_training(
-                    stage_config, stage_idx, logger, 
-                    wandb_run=self.wandb_run,
-                    pipeline=self.pipeline,
-                    trainable_layers=self.trainable_layers,
-                    training_timesteps=training_timestep_indices,
-                    unet_copy=self.unet_copy,
-                )
+
+            save_dir = run_training(
+                stage_config, stage_idx, logger, 
+                wandb_run=self.wandb_run,
+                pipeline=self.pipeline,
+                trainable_layers=self.trainable_layers,
+                training_timesteps=training_timestep_indices,
+                unet_copy=self.unet_copy,
+            )
             logger.info(f"[{stage_idx}] Training completed")
             
             # Step 4: Cleanup temporary files to save disk space

@@ -1,8 +1,3 @@
-"""
-Core training module for B2Diff training pipeline.
-Extracts the training logic from run_train.py into a callable function.
-"""
-
 import os
 import torch
 import contextlib
@@ -39,13 +34,7 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         
     Returns:
         save_dir: Directory where checkpoints were saved
-    """
-    # Convert OmegaConf to dict if needed
-    if hasattr(config, 'to_dict'):
-        config_dict = config.to_dict()
-    else:
-        config_dict = config
-        
+    """     
     if external_logger:
         external_logger.info(f"Starting training for stage {stage_idx}")
     else:
@@ -61,7 +50,6 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     stage_id = f"stage{stage_idx}"
     save_dir = os.path.join(config.save_path, unique_id, stage_id)
     
-    # Use pre-loaded pipeline (no reloading!)
     if pipeline is None or trainable_layers is None:
         raise ValueError("Pipeline and trainable_layers must be provided - should not reload model each stage!")
     
@@ -83,20 +71,11 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         project_config=accelerator_config,
         gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps_2,
     )
-    
-    # IMPORTANT: Do NOT use log_with="wandb" - prevents separate run creation
-    # All logging goes through the parent pipeline's wandb_run
-    
+        
     logger.info(f"\n{config}")
     seed_everything(config.seed)
     
-    # Setup inference dtype
-    inference_dtype = torch.float32
-    if accelerator.mixed_precision == "fp16":
-        inference_dtype = torch.float16
-    elif accelerator.mixed_precision == "bf16":
-        inference_dtype = torch.bfloat16
-    
+
     # Setup save/load hooks for checkpointing (using original pattern)
     def save_model_hook(models, weights, output_dir):
         assert len(models) == 1
@@ -191,11 +170,7 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         assert (config.sample.batch_size * 4 * 2) >= config.train.batch_size
         
         assert (config.sample.batch_size * 4 * 2) % config.train.batch_size == 0
-    # No checkpoint loading - model stays in memory across stages!
-    # if config.resume_from:
-    #     logger.info(f"Resuming from {config.resume_from}")
-    #     accelerator.load_state(config.resume_from)
-    
+
     # Load sample data
     samples = load_sample_stage(save_dir)
     accelerator.save_state()
@@ -222,6 +197,7 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
                 # samples[key] has shape [batch_size, num_timesteps, ...]
                 # We want to keep only the timesteps at the specified indices
                 samples[key] = samples[key][:, timestep_indices]
+
     # Training loop
     for epoch in range(config.train.num_epochs):
         # Shuffle samples along batch dimension
@@ -267,10 +243,6 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
             else:
                 embeds = sample["prompt_embeds"]
             
-            # For progressive training, we already filtered, so iterate over all remaining timesteps
-            # For regular incremental training, use the specified timestep indices
-            # if config.train.progressive_incremental_training and training_timesteps is not None:
-            #     timestep_indices = range(sample["timesteps"].shape[1])
             if getattr(config.train, 'incremental_training', False) and training_timesteps is not None:
                 timestep_indices = training_timesteps
                 if external_logger and accelerator.is_local_main_process and idx == 0:
@@ -290,7 +262,6 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
                 with accelerator.accumulate(pipeline.unet):
                     with autocast():
                         if config.train.cfg:
-                            # print(f"timesteps {sample['timesteps'][:, t]}")
                             noise_pred = pipeline.unet(
                                 torch.cat([sample["latents"][:, t]] * 2),
                                 torch.cat([sample["timesteps"][:, t]] * 2),
@@ -366,7 +337,6 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
                     loss_value = loss.cpu().item()
                     grad_value = total_norm.cpu().item() if total_norm is not None else None
                     
-                    # Compute PPO-style metrics
                     log_prob = total_prob
                     ref_log_prob = sample["log_probs"][:, t]
                     approx_kl = 0.5 * torch.mean((log_prob - ref_log_prob) ** 2)
