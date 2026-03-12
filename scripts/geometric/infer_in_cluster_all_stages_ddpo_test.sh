@@ -163,7 +163,7 @@ for stage_number in $stages; do
     
     python3 scripts/inference/inference_lora_geometric_reward.py \
         --checkpoint_path "$checkpoint_dir" \
-        --output_dir "./outputs/${run_name}/stage${stage_number}" \
+        --output_dir "./outputs/${run_name}_test/stage${stage_number}" \
         --num_images 1080 \
         --batch_size 32 \
         --prompt_file "configs/prompt/template4_test.json"
