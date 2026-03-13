@@ -49,7 +49,7 @@ class ImageDataset(Dataset):
         return image
 
 
-def compute_inception_score_clip(clip_model, imgs, cuda=True, batch_size=32, splits=1):
+def compute_inception_score_clip(clip_model, imgs, cuda=True, batch_size=32, splits=3):
     """
     Computes the inception score of the generated images using CLIP model
     

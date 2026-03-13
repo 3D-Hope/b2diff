@@ -123,6 +123,16 @@ def main(argv):
         help="Zoom factor for orthographic projection (default: 1.0, >1.0 zooms in, <1.0 zooms out)"
     )
     parser.add_argument(
+        "--without_walls",
+        action="store_true",
+        help="Do not render walls"
+    )
+    parser.add_argument(
+        "--without_door",
+        action="store_true",
+        help="Do not render the door"
+    )
+    parser.add_argument(
         "--export_glb",
         action="store_true",
         help="Also export each scene as a GLB file alongside the PNG"
@@ -220,7 +230,7 @@ def main(argv):
     
     # Render projection images
     for i in tqdm(range(len(threed_front_results))):
-        if i not in [298]: continue # TODO: rm 
+        if i not in [298, 0, 2, 13, 46, 55, 56, 62, 124, 147, 184, 224, 334, 413, 439, 729, 727]: continue # TODO: rm 
         scene_idx = threed_front_results[i][0]
         image_path = path_to_image.format(
             i, threed_front_results.test_dataset[scene_idx].scene_id
@@ -316,22 +326,23 @@ def main(argv):
         furn_sizes_for_door  = np.array(ground_sizes)        if ground_sizes        else None
         furn_angles_for_door = np.array(ground_angles)       if ground_angles       else None
 
-        wall_mesh, door_mesh, tr_walls, tr_door = build_walls_with_door(
-            fpoc, wall_height,
-            translations=furn_trans_for_door,
-            sizes=furn_sizes_for_door,
-            angles=furn_angles_for_door,
-            wall_color=(0.94, 0.92, 0.88),
-            with_trimesh=args.export_glb
-        )
-        renderables.append(wall_mesh)
-        if door_mesh is not None:
-            renderables.append(door_mesh)
-        if args.export_glb:
-            if tr_walls is not None:
-                trimesh_meshes.append(tr_walls)
-            if tr_door is not None:
-                trimesh_meshes.append(tr_door)
+        if not args.without_walls:
+            wall_mesh, door_mesh, tr_walls, tr_door = build_walls_with_door(
+                fpoc, wall_height,
+                translations=furn_trans_for_door,
+                sizes=furn_sizes_for_door,
+                angles=furn_angles_for_door,
+                wall_color=(0.94, 0.92, 0.88),
+                with_trimesh=args.export_glb
+            )
+            renderables.append(wall_mesh)
+            if door_mesh is not None and not args.without_door:
+                renderables.append(door_mesh)
+            if args.export_glb:
+                if tr_walls is not None:
+                    trimesh_meshes.append(tr_walls)
+                if tr_door is not None and not args.without_door:
+                    trimesh_meshes.append(tr_door)
         # ───────────────────────────────────────────────────────────────────
 
         scene.clear()

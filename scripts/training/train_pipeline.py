@@ -575,6 +575,30 @@ class TrainingPipeline:
                     "pipeline/stage": stage_idx,
                     "pipeline/elapsed_hours": (time.time() - self.start_time) / 3600,
                 }
+
+                # Forward reward component means from selection metrics to WandB.
+                # Example keys become:
+                # - progression/reward_components/penetration_mean_raw
+                # - progression/reward_components/boundary_mean_raw
+                # - progression/reward_components/object_count_mean_raw
+                # - progression/reward_components/total_mean_raw
+                for metric_name, metric_value in metrics.items():
+                    if not isinstance(metric_value, (int, float)):
+                        continue
+                    if metric_name.startswith("score/component/"):
+                        component_key = metric_name.replace("score/component/", "")
+                        if component_key.endswith("_mean"):
+                            component_log_key = component_key.replace("_mean", "_mean_raw")
+                        else:
+                            component_log_key = component_key
+                        log_dict[f"progression/reward_components/{component_log_key}"] = float(metric_value)
+
+                # Explicit composed total raw mean for universal+custom sum reward.
+                if isinstance(metrics.get("score/component/total_raw_mean", None), (int, float)):
+                    log_dict["progression/reward_components/total_mean_raw"] = float(
+                        metrics["score/component/total_raw_mean"]
+                    )
+
                 self.wandb_run.log(log_dict)
             
             logger.info(f"[{stage_idx}] Stage completed in {stage_time:.2f}s ({stage_time/60:.2f}m)")

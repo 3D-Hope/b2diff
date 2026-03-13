@@ -4,6 +4,7 @@ Extracts the selection logic from run_select.py into a callable function.
 """
 
 import os
+import importlib
 import torch
 import torch.nn.functional as F
 import pickle
@@ -16,161 +17,133 @@ from bert_score import score, BERTScorer
 import open_clip
 from utils.utils import seed_everything
 from core.utils.geometric_rewards import ImageGeometricReward
+from core.universal_rewards.not_out_of_bound_reward import (
+    compute_boundary_violation_reward,
+    SDFCache,
+)
+from core.universal_rewards.penetration_reward import compute_non_penetration_reward
+from core.universal_rewards.object_count_reward import compute_object_count_reward
 
 tqdm = partial(tqdm_lib, dynamic_ncols=True)
-
-def compute_aabb_penetration_depth(centers1, sizes1, centers2, sizes2):
-    """
-    Compute penetration depth between two sets of AABBs.
-
-    Penetration depth is defined as the minimum translation distance needed to
-    separate two overlapping objects. For AABBs, this is the minimum overlap
-    across all axes.
-
-    Args:
-        centers1: (B, N1, 3) - centers of first set of boxes
-        sizes1: (B, N1, 3) - sizes of first set of boxes
-        centers2: (B, N2, 3) - centers of second set of boxes
-        sizes2: (B, N2, 3) - sizes of second set of boxes
-
-    Returns:
-        penetration_depth: (B, N1, N2) - penetration depth (0 if no overlap)
-    """
-    batch_size = centers1.shape[0]
-    device = centers1.device
-
-    # Expand dimensions for pairwise comparison
-    c1 = centers1.unsqueeze(2)  # (B, N1, 1, 3)
-    s1 = sizes1.unsqueeze(2)  # (B, N1, 1, 3)
-    c2 = centers2.unsqueeze(1)  # (B, 1, N2, 3)
-    s2 = sizes2.unsqueeze(1)  # (B, 1, N2, 3)
-
-    # NOTE: sizes are already half-extents (sx/2, sy/2, sz/2)
-    # So we use them directly
-    half1 = s1  # (B, N1, 1, 3) - already half-extents
-    half2 = s2  # (B, 1, N2, 3) - already half-extents
-
-    # Compute center distance for each axis
-    center_dist = torch.abs(c1 - c2)  # (B, N1, N2, 3)
-
-    # Compute sum of half-extents for each axis
-    sum_half_extents = half1 + half2  # (B, N1, N2, 3)
-
-    # Overlap on each axis = sum_of_half_extents - center_distance
-    # If positive, there's overlap; if negative or zero, no overlap
-    overlap_per_axis = sum_half_extents - center_dist  # (B, N1, N2, 3)
-
-    # For AABBs to overlap, they must overlap on ALL axes
-    # Check if overlapping on all axes
-    is_overlapping_all_axes = (overlap_per_axis > 0).all(dim=3)  # (B, N1, N2)
-
-    # Penetration depth is the MINIMUM overlap across all axes
-    # (the smallest amount needed to separate the objects)
-    min_overlap_per_pair = overlap_per_axis.min(dim=3)[0]  # (B, N1, N2)
-
-    # Only consider penetration where objects actually overlap on all axes
-    penetration_depth = torch.where(
-        is_overlapping_all_axes,
-        min_overlap_per_pair,
-        torch.zeros_like(min_overlap_per_pair),
-    )
-
-    # Clamp to ensure non-negative
-    penetration_depth = torch.clamp(penetration_depth, min=0.0)
-
-    return penetration_depth
+_SDF_CACHE = {}
+_ROOM_FEATURES_INDEX = {}
+_CUSTOM_REWARD_FN_CACHE = {}
 
 
-def compute_non_penetration_reward(parsed_scenes, **kwargs):
-    """
-    Calculate reward based on non-penetration constraint using penetration depth.
+def _get_sdf_cache(config):
+    cache_dir = "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/steerable-scene-generation/bedroom_sdf_cache/"
+    grid_resolution = 0.05
+    split = "test"
+    key = (cache_dir, grid_resolution, split)
+    if key not in _SDF_CACHE:
+        _SDF_CACHE[key] = SDFCache(cache_dir, grid_resolution=grid_resolution, split=split)
+    return _SDF_CACHE[key]
 
-    Following the approach from original authors: reward = sum of negative signed distances.
-    When objects overlap, we get positive penetration depth, so reward is negative.
 
-    Args:
-        parsed_scenes: Dict returned by parse_and_descale_scenes()
+def _flatten_fpbpn_indices(fpbpn_list):
+    if not fpbpn_list:
+        return []
+    if isinstance(fpbpn_list[0], list):
+        return [int(i) for batch in fpbpn_list for i in batch]
+    return [int(i) for i in fpbpn_list]
 
-    Returns:
-        rewards: Tensor of shape (B,) with non-penetration rewards for each scene
-    """
-    room_type = kwargs["room_type"]
-    positions = parsed_scenes["positions"]
-    sizes = parsed_scenes["sizes"]
-    object_indices = parsed_scenes["object_indices"]
-    is_empty = parsed_scenes["is_empty"]
-    batch_size = positions.shape[0]
-    device = positions.device
-    
-    # print(f"Parsed scene: pos {positions[:10]} sizes: {sizes[:10]}")
-    # print(f"Parsed scene: {parsed_scenes}")
 
-    # Identify ceiling objects (they don't participate in ground-level collisions)
-    ceiling_objects = ["ceiling_lamp", "pendant_lamp"]
-    idx_to_labels_bedroom = {
-        0: "armchair",
-        1: "bookshelf",
-        2: "cabinet",
-        3: "ceiling_lamp",
-        4: "chair",
-        5: "children_cabinet",
-        6: "coffee_table",
-        7: "desk",
-        8: "double_bed",
-        9: "dressing_chair",
-        10: "dressing_table",
-        11: "kids_bed",
-        12: "nightstand",
-        13: "pendant_lamp",
-        14: "shelf",
-        15: "single_bed",
-        16: "sofa",
-        17: "stool",
-        18: "table",
-        19: "tv_stand",
-        20: "wardrobe",
-    }
-    ceiling_indices = [
-        idx for idx, label in idx_to_labels_bedroom.items() if label in ceiling_objects
+def _fpbpn_key(fpbpn, scale=1e6):
+    arr = np.asarray(fpbpn, dtype=np.float64).reshape(-1)
+    return tuple(np.round(arr * scale).astype(np.int64).tolist())
+
+
+def _get_room_features_index_map(config, scale=1e6):
+    path = getattr(getattr(config, "midiffusion", None), "floor_conditions", None)
+    if not path:
+        raise ValueError("midiffusion.floor_conditions must be set to map fpbpn to indices.")
+
+    key = (path, scale)
+    if key in _ROOM_FEATURES_INDEX:
+        return _ROOM_FEATURES_INDEX[key]
+
+    with open(path, "r") as f:
+        room_features = json.load(f)
+
+    index_map = {}
+    for idx, fpbpn in enumerate(room_features):
+        index_map[_fpbpn_key(fpbpn, scale=scale)] = idx
+
+    _ROOM_FEATURES_INDEX[key] = index_map
+    return index_map
+
+
+def _resolve_fpbpn_indices(fpbpn_list, config):
+    if not fpbpn_list:
+        return []
+
+    first = fpbpn_list[0]
+    if isinstance(first, list):
+        if first and isinstance(first[0], list):
+            if first[0] and isinstance(first[0][0], (int, float)):
+                index_map = _get_room_features_index_map(config)
+                indices = []
+                for fpbpn in fpbpn_list:
+                    key = _fpbpn_key(fpbpn)
+                    if key not in index_map:
+                        raise ValueError("Could not find fpbpn entry in room_features.json.")
+                    indices.append(index_map[key])
+                return indices
+        # batch of indices
+        if first and isinstance(first[0], (int, float)):
+            return [int(i) for batch in fpbpn_list for i in batch]
+    if isinstance(first, (int, float)):
+        return [int(i) for i in fpbpn_list]
+
+    raise ValueError("Unsupported fpbpn_list format; cannot resolve indices.")
+
+
+def _load_custom_reward_fn(custom_reward_name):
+    """Load a custom reward function from core/custom_rewards/<name>.py."""
+    if custom_reward_name in _CUSTOM_REWARD_FN_CACHE:
+        return _CUSTOM_REWARD_FN_CACHE[custom_reward_name]
+
+    module_name = f"core.custom_rewards.{custom_reward_name}"
+    try:
+        module = importlib.import_module(module_name)
+    except Exception as e:
+        raise ValueError(
+            f"Could not import custom reward module '{module_name}': {e}"
+        ) from e
+
+    # Preferred explicit entrypoint
+    if hasattr(module, "compute_reward") and callable(module.compute_reward):
+        fn = module.compute_reward
+        _CUSTOM_REWARD_FN_CACHE[custom_reward_name] = fn
+        return fn
+
+    # Backward-compatible naming candidates
+    candidate_names = [
+        f"compute_{custom_reward_name}_reward",
+        f"compute_{custom_reward_name}_presence_reward",
     ]
-    is_ceiling = torch.zeros_like(is_empty, dtype=torch.bool)
-    for ceiling_idx in ceiling_indices:
-        is_ceiling |= object_indices == ceiling_idx
+    for name in candidate_names:
+        if hasattr(module, name):
+            candidate_fn = getattr(module, name)
+            if callable(candidate_fn):
+                _CUSTOM_REWARD_FN_CACHE[custom_reward_name] = candidate_fn
+                return candidate_fn
 
-    # Create mask for ground objects (non-empty, non-ceiling)
-    is_ground_object = ~is_empty & ~is_ceiling
+    # Last resort: unique callable starting with 'compute_'
+    compute_like_fns = [
+        getattr(module, attr)
+        for attr in dir(module)
+        if attr.startswith("compute_") and callable(getattr(module, attr))
+    ]
+    if len(compute_like_fns) == 1:
+        fn = compute_like_fns[0]
+        _CUSTOM_REWARD_FN_CACHE[custom_reward_name] = fn
+        return fn
 
-    # Compute pairwise penetration depths
-    penetration_depth = compute_aabb_penetration_depth(
-        positions, sizes, positions, sizes
-    )  # (B, N, N)
-
-    # Create mask to ignore self-overlaps (diagonal), empty objects, and ceiling objects
-    mask = is_ground_object.unsqueeze(2) & is_ground_object.unsqueeze(1)  # (B, N, N)
-
-    # Remove self-overlaps (diagonal)
-    eye = torch.eye(positions.shape[1], device=device, dtype=torch.bool)
-    eye = eye.unsqueeze(0).expand(batch_size, -1, -1)  # (B, N, N)
-    mask = mask & ~eye
-
-    # Apply mask to penetration depths
-    masked_penetration = torch.where(
-        mask, penetration_depth, torch.zeros_like(penetration_depth)
+    raise ValueError(
+        f"No valid reward function found in {module_name}. "
+        "Define compute_reward(parsed_scene, **kwargs), or a uniquely identifiable compute_* function."
     )
-
-    # Sum total penetration depth per scene
-    # Divide by 2 because each pair is counted twice (i,j) and (j,i)
-    total_penetration = masked_penetration.sum(dim=[1, 2]) / 2.0  # (B,)
-
-    # Convert to reward: +1 if no penetration, else -penetration_depth
-    # This provides a clear positive signal for valid scenes and negative for invalid ones
-    rewards = torch.where(
-        total_penetration == 0,
-        torch.ones_like(total_penetration),
-        -total_penetration
-    )
-    return rewards
-
 
 # Bedroom object index lookup (shared across reward functions)
 _IDX_TO_LABEL_BEDROOM = {
@@ -185,112 +158,86 @@ _TV_STAND_IDX = 19
 _BED_INDICES  = {8}  # double_bed, kids_bed, single_bed
 
 
-def compute_tv_bed_presence_reward(parsed_scene, ideal=3.0, sigma=1.0, **kwargs):
-    """
-    Gaussian-shaped reward for ideal bed–TV distance.
-    """
-    device = parsed_scene["device"]
-    object_indices = parsed_scene["object_indices"]
-    positions = parsed_scene["positions"]
-    orientations = parsed_scene["orientations"]
-    is_empty = parsed_scene["is_empty"]
-    idx_to_labels = kwargs.get("idx_to_labels", _IDX_TO_LABEL_BEDROOM)
-
-    # Handle both integer and string keys
-    if idx_to_labels and isinstance(list(idx_to_labels.keys())[0], str):
-        idx_to_labels = {int(k): v for k, v in idx_to_labels.items()}
-
-    idx_tv = next((k for k, v in idx_to_labels.items() if "tv_stand" in v), None)
-    idx_bed = next((k for k, v in idx_to_labels.items() if "bed" in v), None)
-    # print(f"TV index: {idx_tv}, Bed index: {idx_bed}")
-    if idx_tv is None or idx_bed is None:
-        return torch.zeros(len(object_indices), device=device)
-
-    rewards = torch.zeros(len(object_indices), device=device)
-    for b in range(len(object_indices)):
-        try:
-            # Get valid mask - ensure boolean tensor
-            if isinstance(is_empty, torch.Tensor):
-                valid_mask = ~is_empty[b]
-            else:
-                valid_mask = ~torch.tensor(is_empty[b], dtype=torch.bool, device=device)
-
-            # Convert to boolean explicitly
-            if isinstance(valid_mask, torch.Tensor):
-                if valid_mask.dtype != torch.bool:
-                    valid_mask = valid_mask.bool()
-            else:
-                # valid_mask is a Python bool - no valid objects
-                continue
-
-            # Check if we have any valid objects
-            if valid_mask.sum().item() == 0:
-                continue
-
-            valid_indices = object_indices[b][valid_mask]
-            valid_pos = positions[b][valid_mask]
-            valid_orient = orientations[b][valid_mask]
-
-            if not isinstance(valid_indices, torch.Tensor):
-                continue
-
-            if valid_indices.dim() == 0:
-                valid_indices = valid_indices.unsqueeze(0)
-                valid_pos = valid_pos.unsqueeze(0)
-                valid_orient = valid_orient.unsqueeze(0)
-
-            if valid_indices.numel() == 0:
-                continue
-
-            # Check for TV and bed - ensure tensor comparisons
-            tv_mask = (valid_indices == idx_tv)
-            bed_mask = (valid_indices == idx_bed)
-
-            if isinstance(tv_mask, torch.Tensor):
-                has_tv = tv_mask.any().item()
-            else:
-                has_tv = bool(tv_mask)
-
-            if isinstance(bed_mask, torch.Tensor):
-                has_bed = bed_mask.any().item()
-            else:
-                has_bed = bool(bed_mask)
-
-            if not has_bed:
-                rewards[b] += -5
-
-            if not has_tv:
-                rewards[b] += -5
-
-            if not (has_tv and has_bed):
-                continue
-
-            tv_pos = valid_pos[valid_indices == idx_tv][0]
-            bed_pos = valid_pos[valid_indices == idx_bed][0]
-
-            dist = torch.norm(tv_pos - bed_pos)
-            rewards[b] += torch.exp(-((dist - ideal) ** 2) / (2 * sigma**2))
-
-            # facing reward
-            bed_dir = valid_orient[valid_indices == idx_bed][0]
-
-            # Compute direction from bed to TV (in XZ plane, ignore Y)
-            dir_bed_to_tv = tv_pos - bed_pos
-            # Project to 2D (XZ plane) to match orientation which is [cos, sin] in XZ
-            dir_bed_to_tv_2d = torch.tensor([dir_bed_to_tv[0], dir_bed_to_tv[2]], device=device)
-            dir_bed_to_tv_2d = dir_bed_to_tv_2d / (torch.norm(dir_bed_to_tv_2d) + 1e-6)
-
-            alignment = F.cosine_similarity(bed_dir.unsqueeze(0), dir_bed_to_tv_2d.unsqueeze(0)).clamp(0, 1)
-            rewards[b] += alignment.item()
-
-        except Exception as e:
-            print(f"[ERROR] reward_tv_distance batch {b}: {e}")
-            continue
-
-    return rewards
 
 
-def threed_score_fn(x0_raw, save_dir, config, only_raw_scores=True):
+
+def _compute_threed_reward_components(parsed, config, room_type, indices=None):
+    """Compute 3D reward components and return total reward plus per-component tensors."""
+    use_universal = getattr(config, "universal_rewards", False)
+    custom_reward = getattr(config, "custom_reward", None)
+    use_tv_bed = getattr(config, "tv_bed", False)
+    threed_reward = getattr(config, "threed_reward", None)
+    object_count_mode = getattr(config, "object_count_mode", "nll")
+
+    components = {}
+
+    # Custom-only mode: when universal rewards are disabled but a custom reward is set,
+    # use only that custom reward.
+    if (not use_universal) and (custom_reward is not None):
+        custom_reward_fn = _load_custom_reward_fn(custom_reward)
+        components[f"custom_{custom_reward}"] = custom_reward_fn(
+            parsed, room_type=room_type, idx_to_labels=_IDX_TO_LABEL_BEDROOM
+        )
+        total_reward = list(components.values())[0]
+        return total_reward, components, f"custom_{custom_reward}"
+
+    if use_universal:
+        if indices is None:
+            raise ValueError("indices must be provided when universal_rewards=true.")
+
+        sdf_cache = _get_sdf_cache(config)
+        components["penetration"] = compute_non_penetration_reward(
+            parsed, room_type=room_type
+        )
+        components["boundary"] = compute_boundary_violation_reward(
+            parsed, indices=indices, sdf_cache=sdf_cache
+        )
+        components["object_count"] = compute_object_count_reward(
+            parsed, mode=object_count_mode
+        )
+
+        # Custom reward can be optionally added on top of universal rewards.
+        if custom_reward is not None:
+            custom_reward_fn = _load_custom_reward_fn(custom_reward)
+            components[f"custom_{custom_reward}"] = custom_reward_fn(
+                parsed, room_type=room_type, idx_to_labels=_IDX_TO_LABEL_BEDROOM
+            )
+
+        total_reward = sum(components.values())
+        return total_reward, components, "universal"
+
+    # Backward-compatible single reward mode (legacy behavior)
+    if threed_reward is None:
+        reward_mode = "tv_bed" if use_tv_bed else "penetration"
+    else:
+        reward_mode = threed_reward
+
+    if reward_mode == "tv_bed":
+        tv_bed_reward_fn = _load_custom_reward_fn("tv_bed")
+        components["tv_bed"] = tv_bed_reward_fn(
+            parsed, room_type=room_type, idx_to_labels=_IDX_TO_LABEL_BEDROOM
+        )
+    elif reward_mode == "boundary":
+        if indices is None:
+            raise ValueError("indices must be provided when threed_reward='boundary'.")
+        sdf_cache = _get_sdf_cache(config)
+        components["boundary"] = compute_boundary_violation_reward(
+            parsed, indices=indices, sdf_cache=sdf_cache
+        )
+    elif reward_mode == "object_count":
+        components["object_count"] = compute_object_count_reward(
+            parsed, mode=object_count_mode
+        )
+    else:
+        components["penetration"] = compute_non_penetration_reward(
+            parsed, room_type=room_type
+        )
+
+    total_reward = list(components.values())[0]
+    return total_reward, components, reward_mode
+
+
+def threed_score_fn(x0_raw, save_dir, config, indices=None, only_raw_scores=True):
     """Non-penetration reward for a batch of denoised 3D scenes, with history-based
     global z-score normalisation mirroring score_fn1.
 
@@ -308,18 +255,37 @@ def threed_score_fn(x0_raw, save_dir, config, only_raw_scores=True):
     unique_id   = config.exp_name
     room_type   = getattr(config.midiffusion, 'room_type',   'bedroom')
     num_classes = getattr(config.midiffusion, 'num_classes', 22)
-    use_tv_bed  = getattr(config, 'tv_bed', False)
+    with torch.no_grad():
+        parsed = parse_and_descale_scenes(
+            x0_raw, num_classes=num_classes, room_type=room_type
+        )
+        R, reward_components, reward_mode = _compute_threed_reward_components(
+            parsed,
+            config,
+            room_type=room_type,
+            indices=indices,
+        )
+        R = R.cpu()
 
-    parsed = parse_and_descale_scenes(x0_raw, num_classes=num_classes, room_type=room_type)
-
-    if use_tv_bed:
-        R = compute_tv_bed_presence_reward(parsed, room_type=room_type, idx_to_labels=_IDX_TO_LABEL_BEDROOM).cpu()  # (B,)
-        scores_filename   = 'tv_bed_scores.pkl'
-        history_file_name = 'history_tv_bed_scores.pkl'
+    if reward_mode == "universal":
+        scores_filename = "universal_scores.pkl"
+        history_file_name = "history_universal_scores.pkl"
+    elif reward_mode.startswith("custom_"):
+        custom_name = reward_mode[len("custom_"):]
+        scores_filename = f"custom_{custom_name}_scores.pkl"
+        history_file_name = f"history_custom_{custom_name}_scores.pkl"
+    elif reward_mode == "tv_bed":
+        scores_filename = "tv_bed_scores.pkl"
+        history_file_name = "history_tv_bed_scores.pkl"
+    elif reward_mode == "boundary":
+        scores_filename = "boundary_scores.pkl"
+        history_file_name = "history_boundary_scores.pkl"
+    elif reward_mode == "object_count":
+        scores_filename = "object_count_scores.pkl"
+        history_file_name = "history_object_count_scores.pkl"
     else:
-        R = compute_non_penetration_reward(parsed, room_type=room_type).cpu()  # (B,)
-        scores_filename   = 'penetration_scores.pkl'
-        history_file_name = 'history_3d_scores.pkl'
+        scores_filename = "penetration_scores.pkl"
+        history_file_name = "history_3d_scores.pkl"
 
     if only_raw_scores:
         return R, {}, R
@@ -358,6 +324,12 @@ def threed_score_fn(x0_raw, save_dir, config, only_raw_scores=True):
         'normalized_scores_mean': float(eval_scores.mean()),
         'normalized_scores_std':  float(eval_scores.std()),
     }
+    # Explicit total composed raw mean (sum of universal components + optional custom).
+    metrics['component/total_raw_mean'] = float(R.mean())
+    for component_name, component_values in reward_components.items():
+        component_values = component_values.detach().cpu()
+        metrics[f'component/{component_name}_mean'] = float(component_values.mean())
+        metrics[f'component/{component_name}_std'] = float(component_values.std())
     return eval_scores, metrics, R
 
 
@@ -665,13 +637,26 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
 
         device  = f"cuda:{config.dev_id}" if torch.cuda.is_available() else "cpu"
         x0_raw  = samples["next_scenes"][:, -1].to(device)  # (B, N, C) final denoised step
+        indices = _resolve_fpbpn_indices(ground, config)
+        if len(indices) != x0_raw.shape[0]:
+            raise ValueError(
+                f"fpbpn_list length ({len(indices)}) does not match samples ({x0_raw.shape[0]})."
+            )
         eval_scores, score_metrics, raw_scores = threed_score_fn(
-            x0_raw, save_dir, config, only_raw_scores=False
+            x0_raw, save_dir, config, indices=indices, only_raw_scores=False
         )
         _embed_key    = 'fpbpn'
         _lat_key      = 'scenes'
         _next_lat_key = 'next_scenes'
-        print(f"3D non-penetration rewards: mean={raw_scores.mean():.4f}, std={raw_scores.std():.4f}")
+        if getattr(config, 'universal_rewards', False):
+            reward_mode = 'universal'
+            if getattr(config, 'custom_reward', None) is not None:
+                reward_mode = f"{reward_mode}+{config.custom_reward}"
+        elif getattr(config, 'custom_reward', None) is not None:
+            reward_mode = f"custom_{config.custom_reward}"
+        else:
+            reward_mode = getattr(config, 'threed_reward', 'penetration')
+        print(f"3D {reward_mode} rewards: mean={raw_scores.mean():.4f}, std={raw_scores.std():.4f}")
     else:
         # SD path: text prompts, CLIP/geometric reward
         with open(os.path.join(save_dir, 'prompt.json'), 'r') as f:
@@ -698,7 +683,7 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
 
     if config.sample.save_train_samples_no_train:
         all_scores_list = [float(s) for s in raw_clip_scores]
-        rewards_key     = 'penetration_reward' if threed else 'clip_reward'
+        rewards_key     = 'threed_reward' if threed else 'clip_reward'
         mean_rewards_summary = {
             f"{rewards_key}_mean": float(raw_clip_scores.mean()),
             f"{rewards_key}_std":  float(raw_clip_scores.std()),
@@ -706,7 +691,7 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
             f"{rewards_key}_max":  float(raw_clip_scores.max()),
             "all_scores": all_scores_list,
         }
-        rewards_fname = 'penetration_rewards.json' if threed else 'clip_rewards.json'
+        rewards_fname = 'threed_rewards.json' if threed else 'clip_rewards.json'
         rewards_path  = os.path.join(save_dir, rewards_fname)
         with open(rewards_path, 'w') as f:
             json.dump(mean_rewards_summary, f, indent=2)
@@ -872,6 +857,11 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
         "num_queries":        num_reward_queries,
         "cumulative_queries": cumulative_reward_queries,
     }
+
+    # Carry score-level metrics (including per-component raw means) to pipeline logging.
+    for metric_name, metric_value in score_metrics.items():
+        if isinstance(metric_value, (int, float)):
+            selection_metrics[f"score/{metric_name}"] = float(metric_value)
 
     if logger:
         logger.info(f"Selection completed for stage {stage_idx}")

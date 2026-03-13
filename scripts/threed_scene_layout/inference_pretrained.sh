@@ -1,15 +1,19 @@
-run_name="tv_bed_pretrained"
+run_name="pretrained_150"
 python3 ./scripts/training/train_pipeline.py \
     exp_name=${run_name} \
     seed=42 \
     sample.batch_size=45 \
     train.batch_size=32 \
     sample.num_batches_per_epoch=24 \
+    sample.save_train_samples_no_train=true \
     threed_scene_layout=true \
     train.incremental_training=true \
-    sample.save_train_samples_no_train=true \
     split_time=1 \
-    tv_bed=true
+    wandb.enabled=false \
+    sample.num_steps=150 \
+    
+    # sample.save_per_sample_trajectories=true \
+    # tv_bed=true
     # sample.fk=true \
     # sample.num_particles=4 \
     # sample.only_best_fk=true \

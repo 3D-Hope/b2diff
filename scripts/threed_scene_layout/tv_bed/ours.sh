@@ -1,10 +1,11 @@
-run_name="test_150_inf"
+run_name="ours_3d_tv_bed"
 python3 ./scripts/training/train_pipeline.py \
     exp_name=${run_name} \
     seed=42 \
-    sample.batch_size=4 \
+    sample.batch_size=32 \
     train.batch_size=32 \
-    sample.num_batches_per_epoch=1 \
+    sample.num_batches_per_epoch=16 \
+    wandb.enabled=true \
     threed_scene_layout=true \
     train.incremental_training=true \
     sample.fk=true \
@@ -13,9 +14,10 @@ python3 ./scripts/training/train_pipeline.py \
     sample.fk_mix_ratio=1 \
     sample.potential_type="max" \
     sample.fk_lambda=2.0 \
-    sample.resample_frequency=3 \
-    sample.resampling_t_start=500 \
-    sample.resampling_t_end=19 \
-    # tv_bed=true
-    # sample.brach_at_before_fk=5 \
-  
+    sample.resample_frequency=10 \
+    sample.resampling_t_start=110 \
+    sample.resampling_t_end=150 \
+    sample.brach_at_before_fk=75 \
+    sample.num_steps=150 \
+    tv_bed=true
+    

@@ -22,7 +22,11 @@ from diffusers.models.attention_processor import LoRAAttnProcessor
 from diffusion.ddim_with_logprob import ddim_step_with_logprob, latents_decode
 from utils.utils import post_processing, seed_everything
 from diffusion.fkd_class import FKD, PotentialType
-from core.selection import score_fn1, compute_tv_bed_presence_reward, _IDX_TO_LABEL_BEDROOM
+from core.selection import score_fn1
+from core.custom_rewards.tv_bed import (
+    compute_tv_bed_presence_reward,
+    _IDX_TO_LABEL_BEDROOM,
+)
 import open_clip
 
 
@@ -220,7 +224,7 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
     # ------------------------------------------------------------------
     if threed:
         from core.sampling import parse_and_descale_scenes
-        from core.selection import compute_non_penetration_reward
+        from core.universal_rewards.penetration_reward import compute_non_penetration_reward
 
         ddim_3d = DDIMScheduler(
             num_train_timesteps=getattr(config.midiffusion, 'num_timesteps', 1000),

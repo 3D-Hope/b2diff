@@ -3,7 +3,7 @@ PYTHONPATH=. python scripts/generate_results.py model.pt --result_tag test --n_s
 
 PYTHONPATH=. python scripts/ashok_train.py /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/config.yaml --experiment_tag test
 
-python ../ThreedFront/scripts/render_results.py /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/output/predicted_results/pretrained/results.pkl  --no_texture --without_floor --path_to_pickled_3d_future_model /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/ThreedFront/output/threed_future_model_bedroom.pkl
+python ../ThreedFront/scripts/render_results.py /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/model/lora/test_150_inf/stage0/sample_00003/result.pkl  --no_texture --path_to_pickled_3d_future_model /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/ThreedFront/output/threed_future_model_bedroom.pkl
 
 python ../ThreedFront/scripts/render_results.py /tmp/vis_steps/sample_000.pkl  --no_texture --path_to_pickled_3d_future_model /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/ThreedFront/output/threed_future_model_bedroom.pkl
 
@@ -35,8 +35,8 @@ PYTHONPATH=. python scripts/train_diffusion.py /media/ajad/YourBook/AshokSaugatR
 PYTHONPATH=. python scripts/ashok_generate_results.py /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/output/log/pretrained_3d_layout_custom_attn/model_06000 \
     --result_tag ddpo_36stage --n_syn_scenes 1080 --batch_size 512 --lora /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/model/lora/ddpo/stage36/checkpoints/checkpoint_1/lora_weights.pt
 
-PYTHONPATH=. python scripts/ashok_generate_results.py /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/output/log/pretrained_3d_layout_custom_attn/model_50000 \
-    --result_tag pretrained --n_syn_scenes 1080 --batch_size 512
+PYTHONPATH=. python scripts/ashok_generate_results.py /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/output/log/pretrained_3d_layout_custom_attn/model_06000 \
+    --result_tag pretrained --n_syn_scenes 1080 --batch_size 512 --num_denoising_steps 150
 
 # ---
 
@@ -195,3 +195,25 @@ PYTHONPATH=. python scripts/ashok_generate_results.py /media/ajad/YourBook/Ashok
 PYTHONPATH=. python scripts/ashok_generate_results.py /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/output/log/pretrained_3d_layout_custom_attn/model_06000 --result_tag 4_particles_incremental_fk_tv_bed --n_syn_scenes 1080 --batch_size 512
 
 
+# ---
+python ../ThreedFront/scripts/render_results_better.py /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/tmp_for_rendering/pretrained/results.pkl \
+    --path_to_pickled_3d_future_model /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/ThreedFront/output/threed_future_model_bedroom.pkl\
+    --export_glb --without_walls --without_door
+
+
+
+python ../ThreedFront/scripts/render_results_better.py /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/tmp_for_rendering/b2/results.pkl \
+    --path_to_pickled_3d_future_model /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/ThreedFront/output/threed_future_model_bedroom.pkl\
+    --export_glb --without_walls --without_door
+
+cp /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/output/full_predicted_results/b2_tv_bed/stage76/results.pkl /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/tmp_for_rendering/b2/results.pkl
+
+python ../ThreedFront/scripts/render_results_better.py /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/tmp_for_rendering/ddpo/results.pkl \
+    --path_to_pickled_3d_future_model /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/ThreedFront/output/threed_future_model_bedroom.pkl\
+    --export_glb --without_walls --without_door
+
+
+
+python ../ThreedFront/scripts/render_results_better.py /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/tmp_for_rendering/ours/results.pkl \
+    --path_to_pickled_3d_future_model /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/ThreedFront/output/threed_future_model_bedroom.pkl\
+    --export_glb --without_walls --without_door

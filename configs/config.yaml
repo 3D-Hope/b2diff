@@ -39,10 +39,14 @@ reward_fn: "clip"
 # Model Selection: 2D (Stable Diffusion) vs 3D (MiDiffusion)
 threed_scene_layout: false  # Set to true to use MiDiffusion for 3D scene generation
 # 3D reward function selection
-# tv_bed: when true, reward is +1 (both TV stand & bed present), +0.5 (one present), -1 (neither)
-#         when false, uses non-penetration (collision) reward
+# threed_reward: "penetration" (default), "tv_bed", or "boundary"
+# tv_bed: legacy flag; if threed_reward is unset, tv_bed=true uses tv_bed reward
 tv_bed: false
-
+threed_reward: "penetration"
+# Universal + custom reward composition
+universal_rewards: false
+custom_reward: null  # e.g., "tv_bed"; null disables custom reward
+object_count_mode: "nll"  # kl, nll, gaussian
 # Pretrained model (2D - Stable Diffusion)
 pretrained:
   model: "CompVis/stable-diffusion-v1-4"

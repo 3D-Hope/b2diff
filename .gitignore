@@ -9,3 +9,9 @@ wandb/
 *.zip
 outputs/
 model.pt
+image_viewer/
+render_logs/
+*.glb
+*.png
+*.pkl
+*.gif
