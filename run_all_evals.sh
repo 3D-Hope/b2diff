@@ -2,12 +2,12 @@
 
 # Array of all run names
 runs=(
-    "b2_3d_tv_bed"
-    "ours_3d_tv_bed"
-    "ddpo_3d_collision"
-    "ddpo_3d_tv_bed"
-    "b2_3d_collision"
-    "ours_3d_collision"
+    # "tv_bed_only"
+    # "tv_bed_universal"
+    # "3d_oob"
+    # "3d_collision"
+    # "universal_only"
+    "universal_only_oob_area"
 )
 
 # Start and end indices

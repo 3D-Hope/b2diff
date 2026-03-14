@@ -474,7 +474,7 @@ class TrainingPipeline:
             else:
                 logger.info(f"[{stage_idx}] Running sampling...")
                 # Determine sampling mode: mixed (FK + vanilla), FK only, or vanilla only
-                if self.config.sample.fk and 0 < self.config.sample.fk_mix_ratio < 1.0:
+                if self.config.sample.fk and 0 < self.config.sample.fk_mix_ratio < 1.0: # TODO: make fk cases able to continue from universal ckpt
                     # Mixed sampling: combine FK and vanilla
                     logger.info(f"[{stage_idx}] Using MIXED sampling (FK: {self.config.sample.fk_mix_ratio*100:.0f}%, Vanilla: {(1-self.config.sample.fk_mix_ratio)*100:.0f}%)")
                     save_dir = run_mixed_sampling(
@@ -627,6 +627,13 @@ class TrainingPipeline:
         logger.info(f"Experiment: {self.config.exp_name}")
         logger.info(f"Total stages: {self.config.pipeline.stage_cnt}")
         logger.info(f"Continue from stage: {self.config.pipeline.continue_from_stage}")
+        if self.config.pipeline.continue_from_stage > 0:
+            startup_case = "resume_from_stage"
+        elif getattr(self.config, "continue_from_universal", False):
+            startup_case = "bootstrap_from_universal"
+        else:
+            startup_case = "fresh_lora_init"
+        logger.info(f"Startup mode: case={startup_case}")
         if self.config.pipeline.continue_from_stage > 0:
             logger.info(f"✓ Resumed from stage {self.config.pipeline.continue_from_stage - 1} checkpoint")
         logger.info(f"Split step range: [{self.config.pipeline.split_step_left}, {self.config.pipeline.split_step_right}]")

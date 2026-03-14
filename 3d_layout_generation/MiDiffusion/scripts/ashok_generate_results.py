@@ -61,11 +61,12 @@ def ddim_sample(
         beta_end=beta_end,
         clip_sample=False,
         prediction_type="epsilon",
-        steps_offset=1,
+        steps_offset=1 if num_denoising_steps < num_timesteps else 0,  # offset for 1000 steps (mirrors original code)
     )
     scheduler.set_timesteps(num_denoising_steps, device=device)
 
     print(f"Running DDIM sampling with {num_denoising_steps} steps")
+    # print(f"Timesteps: {scheduler.timesteps.cpu().numpy()}")
 
     x_t = torch.randn(B, num_objects, scene_dim, device=device)
 

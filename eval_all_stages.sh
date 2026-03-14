@@ -46,7 +46,7 @@ mkdir -p "${OUTPUT_BASE}"
 
 # Write CSV header only when starting a fresh table
 if [ ! -f "${RESULTS_CSV}" ]; then
-    echo "stage,col_obj,col_scene,avg_num_obj,kl_div,mean_tv_bed_reward,scenes_with_multiple_tv_stands,scenes_with_multiple_beds,out_of_bound_rate" \
+    echo "stage,col_obj,col_scene,avg_num_obj,kl_div,out_of_bound_rate,walkable_average_rate,accessable_rate,box_wall_rate,object_category_entropy_synthesized,pairwise_scene_embedding_distance_synthesized,furniture_weighted_variance_synthesized" \
         > "${RESULTS_CSV}"
 fi
 
@@ -143,9 +143,17 @@ for i in $(seq "${START_STAGE}" "${END_STAGE}"); do
     "${EVAL_VENV_PYTHON}" "${THREEDFRONT_DIR}/scripts/calculate_num_obj.py" "${PKL_FILE}" \
         2>&1 | tee -a "${EVAL_LOG}"
 
-    echo "--- Reward Evaluation ---" | tee -a "${EVAL_LOG}"
-    "${EVAL_VENV_PYTHON}" "${THREEDFRONT_DIR}/scripts/evaluate_tv_bed_reward.py" "${PKL_FILE}" \
+    echo "--- diversity ---" | tee -a "${EVAL_LOG}"
+    "${EVAL_VENV_PYTHON}" "${THREEDFRONT_DIR}/scripts/evaluate_scene_statistics.py" "${PKL_FILE}" \
         2>&1 | tee -a "${EVAL_LOG}"
+
+    echo
+    "${EVAL_VENV_PYTHON}" /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/steerable-scene-generation/scripts/physcene_metrics.py  "${PKL_FILE}" \
+        2>&1 | tee -a "${EVAL_LOG}"
+
+    # echo "--- Reward Evaluation ---" | tee -a "${EVAL_LOG}"
+    # "${EVAL_VENV_PYTHON}" "${THREEDFRONT_DIR}/scripts/evaluate_tv_bed_reward.py" "${PKL_FILE}" \
+        # 2>&1 | tee -a "${EVAL_LOG}"
 
 
 
@@ -173,16 +181,3 @@ else
 fi
 
 
-BASE=/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/output/full_predicted_results
-for run in ddpo 3d_b2_lora_16_test inc_b2 inc_b2_8_particles 8_particles_incremental_branch_fk 8_particles_incremental_fk 4_particles_incremental_branch_fk 4_particles_incremental_fk; do
-    log="${BASE}/${run}/pipeline.log"
-    if [ ! -f "$log" ]; then
-        echo "[$run] NO LOG FILE"
-    else
-        last=$(tail -3 "$log")
-        errors=$(grep -c "ERROR\|Traceback\|Error\|FAILED" "$log" 2>/dev/null || true)
-        echo "=== $run (errors: $errors) ==="
-        tail -3 "$log"
-        echo ""
-    fi
-done

@@ -34,7 +34,7 @@ import torch.nn.functional as F
 
 
 def compute_object_count_reward(
-    parsed_scene, mode="nll", target_count=5.0, std_dev=1.43, **kwargs
+    parsed_scene, mode="kl", target_count=5.21, std_dev=1, **kwargs
 ):
     """
     Calculate reward based on object count distribution.

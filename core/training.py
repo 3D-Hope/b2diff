@@ -24,6 +24,75 @@ tqdm = partial(tqdm_lib, dynamic_ncols=True)
 logger = get_logger(__name__)
 
 
+def _should_bootstrap_from_universal(config, stage_idx):
+    if not getattr(config, "continue_from_universal", False):
+        return False
+
+    start_stage = int(getattr(getattr(config, "pipeline", None), "continue_from_stage", 0))
+    if start_stage != 0:
+        return False
+    if stage_idx is None:
+        return True
+    return int(stage_idx) == 0
+
+
+def _load_universal_checkpoint_if_needed(
+    *,
+    config,
+    stage_idx,
+    pipeline,
+    accelerator,
+    external_logger=None,
+):
+    if not _should_bootstrap_from_universal(config, stage_idx):
+        return
+
+    checkpoint_root = getattr(config, "path_to_universal_lora", None)
+    if checkpoint_root in (None, ""):
+        raise ValueError(
+            "continue_from_universal=true requires path_to_universal_lora to be set."
+        )
+
+    checkpoint_root = os.path.normpath(os.path.expanduser(str(checkpoint_root)))
+    if not os.path.exists(checkpoint_root):
+        raise FileNotFoundError(
+            f"Universal checkpoint path does not exist: {checkpoint_root}"
+        )
+
+    if getattr(config, "threed_scene_layout", False):
+        if config.use_lora:
+            lora_path = (
+                checkpoint_root
+                if checkpoint_root.endswith(".pt")
+                else os.path.join(checkpoint_root, "lora_weights.pt")
+            )
+            if not os.path.isfile(lora_path):
+                raise FileNotFoundError(
+                    f"Could not find LoRA checkpoint file: {lora_path}"
+                )
+            state = torch.load(lora_path, map_location=accelerator.device)
+            pipeline.load_state_dict(state, strict=False)
+        else:
+            model_path = (
+                checkpoint_root
+                if checkpoint_root.endswith(".pt")
+                else os.path.join(checkpoint_root, "model.pt")
+            )
+            if not os.path.isfile(model_path):
+                raise FileNotFoundError(
+                    f"Could not find model checkpoint file: {model_path}"
+                )
+            state = torch.load(model_path, map_location=accelerator.device)
+            pipeline.model.load_state_dict(state)
+    else:
+        accelerator.load_state(checkpoint_root)
+
+    message = f"Bootstrapped model from universal checkpoint: {checkpoint_root}"
+    logger.info(message)
+    if external_logger:
+        external_logger.info(message)
+
+
 def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, pipeline=None, trainable_layers=None, training_timesteps=None):
     """
     Run the training phase for a given stage.
@@ -150,6 +219,14 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
 
     accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
+
+    _load_universal_checkpoint_if_needed(
+        config=config,
+        stage_idx=stage_idx,
+        pipeline=pipeline,
+        accelerator=accelerator,
+        external_logger=external_logger,
+    )
     
 
     if config.allow_tf32:

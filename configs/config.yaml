@@ -16,6 +16,8 @@ lora_alpha: 16  # Scale of LoRA updates (recommend: same as lora_rank)
 lora_dropout: 0.0
 resume_id: "" #wandb run id to resume from
 dev_id: 0
+continue_from_universal: false
+path_to_universal_lora: /media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/model/lora/universal_only_oob_area/stage92/checkpoints/checkpoint_1
 
 # Pipeline settings (from bash script)
 pipeline:
@@ -57,6 +59,7 @@ pretrained:
 midiffusion:
   # Paths
   floor_conditions: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/room_features.json"
+  floor_polygons_path: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/floor_polygons_test.json"
   config_path: "3d_layout_generation/MiDiffusion/config.yaml"
   checkpoint_path: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/output/log/pretrained_3d_layout_custom_attn/model_06000"
   dataset_directory: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/steerable-scene-generation/MiData/bedroom"
