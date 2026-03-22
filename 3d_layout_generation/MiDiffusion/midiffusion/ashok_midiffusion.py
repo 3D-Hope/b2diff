@@ -591,7 +591,7 @@ class MIDiffusionContinuous(DenoiseTransformer):
             if self.objfeat_dim > 0:
                 self.objfeat_embedf = self._encoder_mlp(n_embd, self.objfeat_dim)
                 feature_str += "/objfeat"
-            print("separate unet1d encoder/decoder of {}".format(feature_str))
+            # print("separate unet1d encoder/decoder of {}".format(feature_str))
         else:
             self.init_mlp = self._encoder_mlp(n_embd, self.channels)
             print("unet1d encoder of all object properties")
@@ -689,7 +689,7 @@ class SceneDiffuserMiDiffusion(nn.Module):
         super().__init__()
         self.floor_encoder, floor_cond_dim = load_floor_encoder_from_config()
         context_dim = floor_cond_dim  # 64D from PointNet
-        print(f"[Ashok] Using floor encoder with context dim: {context_dim}")
+        # print(f"[Ashok] Using floor encoder with context dim: {context_dim}")
 
 
         network_dim = {

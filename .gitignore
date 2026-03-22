@@ -16,3 +16,5 @@ render_logs/
 *.pkl
 *.gif
 *.csv
+api/
+test_random_floor/
