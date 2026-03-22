@@ -33,7 +33,44 @@ _SDF_CACHE = {}
 _ACCESSIBILITY_CACHE = {}
 _ROOM_FEATURES_INDEX = {}
 _FLOOR_POLYGONS_CACHE = {}
+_FLOOR_GEOMETRY_CACHE = {}
 _CUSTOM_REWARD_FN_CACHE = {}
+
+
+def _normalize_custom_reward_names(custom_reward):
+    """Normalize custom_reward config to a deduplicated list of reward names."""
+    if custom_reward is None:
+        return []
+
+    if isinstance(custom_reward, str):
+        reward_names = [custom_reward]
+    elif isinstance(custom_reward, (list, tuple)) or (
+        hasattr(custom_reward, "__iter__") and not isinstance(custom_reward, (dict, bytes, bytearray))
+    ):
+        reward_names = list(custom_reward)
+    else:
+        raise ValueError(
+            "custom_reward must be null, a string, or a list of strings."
+        )
+
+    normalized = []
+    seen = set()
+    for reward_name in reward_names:
+        if not isinstance(reward_name, str):
+            raise ValueError("Each custom reward name must be a string.")
+        cleaned = reward_name.strip()
+        if not cleaned:
+            raise ValueError("Custom reward names cannot be empty.")
+        if cleaned not in seen:
+            normalized.append(cleaned)
+            seen.add(cleaned)
+    return normalized
+
+
+def _custom_reward_mode_name(custom_reward_names):
+    if len(custom_reward_names) == 1:
+        return f"custom_{custom_reward_names[0]}"
+    return "custom_multi_" + "__".join(custom_reward_names)
 
 
 def _get_sdf_cache(config):
@@ -59,6 +96,21 @@ def _get_floor_polygons_by_condition(config):
 
     _FLOOR_POLYGONS_CACHE[path] = floor_polygons
     return floor_polygons
+
+
+def _get_floor_geometry_by_condition(config):
+    path = getattr(getattr(config, "midiffusion", None), "floor_geometry_path", None)
+    if not path:
+        return None
+
+    if path in _FLOOR_GEOMETRY_CACHE:
+        return _FLOOR_GEOMETRY_CACHE[path]
+
+    with open(path, "r") as f:
+        floor_geometry = json.load(f)
+
+    _FLOOR_GEOMETRY_CACHE[path] = floor_geometry
+    return floor_geometry
 
 
 def _get_accessibility_cache(config):
@@ -193,11 +245,31 @@ _BED_INDICES  = {8}  # double_bed, kids_bed, single_bed
 
 
 
+def _custom_reward_kwargs(room_type, floor_geometry=None):
+    kwargs = {
+        "room_type": room_type,
+        "idx_to_labels": _IDX_TO_LABEL_BEDROOM,
+    }
 
-def _compute_threed_reward_components(parsed, config, room_type, indices=None, floor_polygons=None):
+    if floor_geometry is not None:
+        kwargs["floor_plan_vertices"] = [
+            entry["floor_plan_vertices"] for entry in floor_geometry
+        ]
+        kwargs["floor_plan_faces"] = [
+            entry["floor_plan_faces"] for entry in floor_geometry
+        ]
+        kwargs["floor_plan_centroid"] = [
+            entry["floor_plan_centroid"] for entry in floor_geometry
+        ]
+
+    return kwargs
+
+
+def _compute_threed_reward_components(parsed, config, room_type, indices=None, floor_polygons=None, floor_geometry=None):
     """Compute 3D reward components and return total reward plus per-component tensors."""
     use_universal = getattr(config, "universal_rewards", False)
     custom_reward = getattr(config, "custom_reward", None)
+    custom_reward_names = _normalize_custom_reward_names(custom_reward)
     use_tv_bed = getattr(config, "tv_bed", False)
     threed_reward = getattr(config, "threed_reward", None)
     object_count_mode = getattr(config, "object_count_mode", "nll")
@@ -206,13 +278,15 @@ def _compute_threed_reward_components(parsed, config, room_type, indices=None, f
 
     # Custom-only mode: when universal rewards are disabled but a custom reward is set,
     # use only that custom reward.
-    if (not use_universal) and (custom_reward is not None):
-        custom_reward_fn = _load_custom_reward_fn(custom_reward)
-        components[f"custom_{custom_reward}"] = custom_reward_fn(
-            parsed, room_type=room_type, idx_to_labels=_IDX_TO_LABEL_BEDROOM
-        )
-        total_reward = list(components.values())[0]
-        return total_reward, components, f"custom_{custom_reward}"
+    if (not use_universal) and len(custom_reward_names) > 0:
+        for reward_name in custom_reward_names:
+            custom_reward_fn = _load_custom_reward_fn(reward_name)
+            components[f"custom_{reward_name}"] = custom_reward_fn(
+                parsed,
+                **_custom_reward_kwargs(room_type=room_type, floor_geometry=floor_geometry),
+            )
+        total_reward = sum(components.values())
+        return total_reward, components, _custom_reward_mode_name(custom_reward_names)
 
     if use_universal:
         if indices is None:
@@ -237,10 +311,11 @@ def _compute_threed_reward_components(parsed, config, room_type, indices=None, f
         )
 
         # Custom reward can be optionally added on top of universal rewards.
-        if custom_reward is not None:
-            custom_reward_fn = _load_custom_reward_fn(custom_reward)
-            components[f"custom_{custom_reward}"] = custom_reward_fn(
-                parsed, room_type=room_type, idx_to_labels=_IDX_TO_LABEL_BEDROOM
+        for reward_name in custom_reward_names:
+            custom_reward_fn = _load_custom_reward_fn(reward_name)
+            components[f"custom_{reward_name}"] = custom_reward_fn(
+                parsed,
+                **_custom_reward_kwargs(room_type=room_type, floor_geometry=floor_geometry),
             )
 
         total_reward = sum(components.values())
@@ -255,7 +330,8 @@ def _compute_threed_reward_components(parsed, config, room_type, indices=None, f
     if reward_mode == "tv_bed":
         tv_bed_reward_fn = _load_custom_reward_fn("tv_bed")
         components["tv_bed"] = tv_bed_reward_fn(
-            parsed, room_type=room_type, idx_to_labels=_IDX_TO_LABEL_BEDROOM
+            parsed,
+            **_custom_reward_kwargs(room_type=room_type, floor_geometry=floor_geometry),
         )
     elif reward_mode == "boundary":
         if floor_polygons is None:
@@ -277,7 +353,7 @@ def _compute_threed_reward_components(parsed, config, room_type, indices=None, f
     return total_reward, components, reward_mode
 
 
-def threed_score_fn(x0_raw, save_dir, config, indices=None, floor_polygons=None, only_raw_scores=True):
+def threed_score_fn(x0_raw, save_dir, config, indices=None, floor_polygons=None, floor_geometry=None, only_raw_scores=True):
     """Non-penetration reward for a batch of denoised 3D scenes, with history-based
     global z-score normalisation mirroring score_fn1.
 
@@ -305,6 +381,7 @@ def threed_score_fn(x0_raw, save_dir, config, indices=None, floor_polygons=None,
             room_type=room_type,
             indices=indices,
             floor_polygons=floor_polygons,
+            floor_geometry=floor_geometry,
         )
         R = R.cpu()
 
@@ -367,6 +444,17 @@ def threed_score_fn(x0_raw, save_dir, config, indices=None, floor_polygons=None,
     }
     # Explicit total composed raw mean (sum of universal components + optional custom).
     metrics['component/total_raw_mean'] = float(R.mean())
+    # Universal-only composed total (excludes any optional custom reward).
+    if reward_mode == "universal":
+        universal_components = [
+            component_values
+            for component_name, component_values in reward_components.items()
+            if not component_name.startswith("custom_")
+        ]
+        if len(universal_components) > 0:
+            universal_total = sum(universal_components).detach().cpu()
+            metrics['component/universal_total_raw_mean'] = float(universal_total.mean())
+            metrics['component/universal_total_raw_std'] = float(universal_total.std())
     for component_name, component_values in reward_components.items():
         component_values = component_values.detach().cpu()
         metrics[f'component/{component_name}_mean'] = float(component_values.mean())
@@ -687,23 +775,50 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
         floor_polygons = [floor_polygons_by_condition[int(i)] for i in indices]
         if any(poly is None for poly in floor_polygons):
             raise ValueError("Missing floor polygons for one or more resolved condition indices.")
+
+        floor_geometry = None
+        floor_geometry_by_condition = _get_floor_geometry_by_condition(config)
+        if floor_geometry_by_condition is not None:
+            required_geometry_keys = (
+                "floor_plan_vertices",
+                "floor_plan_faces",
+                "floor_plan_centroid",
+            )
+            floor_geometry = []
+            for i in indices:
+                entry = floor_geometry_by_condition[int(i)]
+                if entry is None:
+                    raise ValueError(
+                        f"Missing floor geometry for condition index {int(i)}."
+                    )
+                for key in required_geometry_keys:
+                    if key not in entry:
+                        raise ValueError(
+                            f"Missing '{key}' in floor geometry entry for condition index {int(i)}."
+                        )
+                floor_geometry.append(entry)
+
         eval_scores, score_metrics, raw_scores = threed_score_fn(
             x0_raw,
             save_dir,
             config,
             indices=indices,
             floor_polygons=floor_polygons,
+            floor_geometry=floor_geometry,
             only_raw_scores=False,
         )
         _embed_key    = 'fpbpn'
         _lat_key      = 'scenes'
         _next_lat_key = 'next_scenes'
+        custom_reward_names = _normalize_custom_reward_names(
+            getattr(config, 'custom_reward', None)
+        )
         if getattr(config, 'universal_rewards', False):
             reward_mode = 'universal'
-            if getattr(config, 'custom_reward', None) is not None:
-                reward_mode = f"{reward_mode}+{config.custom_reward}"
-        elif getattr(config, 'custom_reward', None) is not None:
-            reward_mode = f"custom_{config.custom_reward}"
+            if len(custom_reward_names) > 0:
+                reward_mode = f"{reward_mode}+{'+'.join(custom_reward_names)}"
+        elif len(custom_reward_names) > 0:
+            reward_mode = _custom_reward_mode_name(custom_reward_names)
         else:
             reward_mode = getattr(config, 'threed_reward', 'penetration')
         print(f"3D {reward_mode} rewards: mean={raw_scores.mean():.4f}, std={raw_scores.std():.4f}")

@@ -47,7 +47,7 @@ def compute_accessibility_reward(
     indices: List[int],  # (B,) - indices to lookup cached grids
     accessibility_cache=None,  
     grid_resolution: float = 0.1,
-    agent_radius: float = 0.15,
+    agent_radius: float = 0.3,
     save_viz: bool = False,  # NEW: option to save visualizations
     viz_dir: str = "./viz",  # NEW: directory for visualizations
     floor_polygons: torch.Tensor=None,  # (B, num_vertices, 2)

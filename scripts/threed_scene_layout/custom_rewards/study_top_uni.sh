@@ -1,4 +1,4 @@
-run_name="universal_only_oob_area"
+run_name="study_top_uni"
 python3 ./scripts/training/train_pipeline.py \
     exp_name=${run_name} \
     seed=42 \
@@ -15,3 +15,6 @@ python3 ./scripts/training/train_pipeline.py \
     sample.num_steps=20 \
     train.num_stages_per_increment=20 \
     universal_rewards=true \
+    custom_reward="desk_chair_for_study" \
+    pipeline.stage_cnt=300 \
+    continue_from_universal=true \

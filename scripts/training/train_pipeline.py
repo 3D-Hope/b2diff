@@ -587,7 +587,9 @@ class TrainingPipeline:
                         continue
                     if metric_name.startswith("score/component/"):
                         component_key = metric_name.replace("score/component/", "")
-                        if component_key.endswith("_mean"):
+                        if component_key.endswith("_raw_mean"):
+                            component_log_key = component_key.replace("_raw_mean", "_mean_raw")
+                        elif component_key.endswith("_mean"):
                             component_log_key = component_key.replace("_mean", "_mean_raw")
                         else:
                             component_log_key = component_key
@@ -597,6 +599,12 @@ class TrainingPipeline:
                 if isinstance(metrics.get("score/component/total_raw_mean", None), (int, float)):
                     log_dict["progression/reward_components/total_mean_raw"] = float(
                         metrics["score/component/total_raw_mean"]
+                    )
+
+                # Explicit universal-only composed total raw mean (excludes optional custom reward).
+                if isinstance(metrics.get("score/component/universal_total_raw_mean", None), (int, float)):
+                    log_dict["progression/reward_components/universal_total_mean_raw"] = float(
+                        metrics["score/component/universal_total_raw_mean"]
                     )
 
                 self.wandb_run.log(log_dict)

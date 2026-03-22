@@ -15,4 +15,7 @@ python3 ./scripts/training/train_pipeline.py \
     sample.num_steps=20 \
     train.num_stages_per_increment=20 \
     universal_rewards=true \
-    custom_reward="tv_bed"
+    custom_reward="tv_bed" \
+    pipeline.stage_cnt=300 \
+    pipeline.continue_from_stage=100 \
+    resume_id="ha5o5fpf" \

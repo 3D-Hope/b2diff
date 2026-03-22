@@ -7,12 +7,15 @@ runs=(
     # "3d_oob"
     # "3d_collision"
     # "universal_only"
-    "universal_only_oob_area"
+    # "universal_only_oob_area"
+    # "tv_bed_top_of_universal"
+    "robot_reachability_075m_top_of_universal"
+    "robot_fetch_1m_high_top_of_universal"
 )
 
 # Start and end indices
 START=0
-END=99
+END=199
 
 # Function to run eval for a single run
 run_eval() {

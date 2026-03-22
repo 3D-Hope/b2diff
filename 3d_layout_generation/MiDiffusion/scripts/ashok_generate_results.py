@@ -449,8 +449,8 @@ def main(argv):
     pickle.dump(threed_front_results, open(path_to_results, "wb"))
     print("Saved result to:", path_to_results)
 
-    kl_divergence = threed_front_results.kl_divergence()
-    print("Object category KL divergence:", kl_divergence)
+    # kl_divergence = threed_front_results.kl_divergence()
+    # print("Object category KL divergence:", kl_divergence)
 
 
 if __name__ == "__main__":

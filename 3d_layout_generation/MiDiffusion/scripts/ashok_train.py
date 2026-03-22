@@ -20,6 +20,7 @@ from torch.utils.data import DataLoader
 from utils import PROJ_DIR, update_data_file_paths, id_generator, save_experiment_params, \
     load_config, get_time_str, load_checkpoints, save_checkpoints
 from midiffusion.datasets.threed_front_encoding import get_encoded_dataset
+from midiffusion.datasets.synthetic_finetune_dataset import SyntheticFineTuneDataset
 import wandb
 from midiffusion.stats_logger import StatsLogger, WandB
 from midiffusion.ashok_midiffusion import SceneDiffuserMiDiffusion
@@ -264,6 +265,21 @@ def main(argv):
         )
     )
 
+    parser.add_argument(
+        "--synthetic_only",
+        action="store_true",
+        help="Use only synthetic data for training"
+    )
+
+    parser.add_argument(
+        "--synthetic_result_files",
+        nargs="+",
+        default=["/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/output/predicted_results/good_samples_pretrained/results.pkl"],
+        help="Comma-separated list of paths to the pickled ThreedFrontResults objects "
+             "containing the synthetic layouts to be used for training when "
+             "--synthetic_only is set."
+    )
+
     args = parser.parse_args(argv)
 
     # Set the random seed
@@ -292,15 +308,50 @@ def main(argv):
     config = load_config(args.config_file)
     shutil.copyfile(args.config_file, path_to_config)
 
-    train_dataset = get_encoded_dataset(
-        update_data_file_paths(config["data"]),
-        path_to_bounds=None,
-        augmentations=config["data"].get("augmentations", None),
-        split=["train", "val"],
-        max_length=config["network"]["sample_num_points"],
-        include_room_mask=(config["network"]["room_mask_condition"] and \
-                           config["feature_extractor"]["name"]=="resnet18")
-    )
+    use_synthetic_only = bool(args.synthetic_only)
+
+    if use_synthetic_only:
+        synthetic_result_files = args.synthetic_result_files
+        if not synthetic_result_files:
+            raise ValueError(
+                "training.synthetic_only=true requires training.synthetic_result_files"
+            )
+
+        synthetic_bounds_path = config["training"].get("synthetic_bounds_path", None)
+        if synthetic_bounds_path is None and args.weight_file is not None:
+            synthetic_bounds_path = os.path.join(os.path.dirname(args.weight_file), "bounds.npz")
+        if synthetic_bounds_path is None:
+            raise ValueError(
+                "training.synthetic_only=true requires training.synthetic_bounds_path, "
+                "or pass --weight_file located next to bounds.npz"
+            )
+
+        reference_encoded_dataset = get_encoded_dataset(
+            update_data_file_paths(config["data"]),
+            path_to_bounds=synthetic_bounds_path,
+            augmentations=None,
+            split=["train", "val"],
+            max_length=config["network"]["sample_num_points"],
+            include_room_mask=(config["network"]["room_mask_condition"] and \
+                               config["feature_extractor"]["name"]=="resnet18")
+        )
+
+        train_dataset = SyntheticFineTuneDataset(
+            pickle_paths=synthetic_result_files,
+            reference_encoded_dataset=reference_encoded_dataset,
+            bounds=reference_encoded_dataset.bounds,
+            max_length=config["network"]["sample_num_points"],
+        )
+    else:
+        train_dataset = get_encoded_dataset(
+            update_data_file_paths(config["data"]),
+            path_to_bounds=None,
+            augmentations=config["data"].get("augmentations", None),
+            split=["train", "val"],
+            max_length=config["network"]["sample_num_points"],
+            include_room_mask=(config["network"]["room_mask_condition"] and \
+                               config["feature_extractor"]["name"]=="resnet18")
+        )
     # Compute the bounds for this experiment, save them to a file in the
     # experiment directory and pass them to the validation dataset
     np.savez(
@@ -393,10 +444,14 @@ def main(argv):
         return
 
     # lr scheduler: piecewise-linear lambda decay (epoch-based)
-    _lr_start_epoch = config["training"].get("lr_start_epoch", 1000)
+    # _lr_start_epoch = config["training"].get("lr_start_epoch", 1000)
+    _lr_start_epoch = 100
+
     _lr_end_epoch   = config["training"].get("lr_end_epoch",   epochs)
-    _lr_start       = config["training"]["lr"]
-    _lr_end         = config["training"].get("lr_end", _lr_start)
+    # _lr_start       = config["training"]["lr"]
+    _lr_start       = 1e-5
+    # _lr_end         = config["training"].get("lr_end", _lr_start)
+    _lr_end         = 1e-6
 
     def _lambda_lr(epoch):
         """Hold start_lr up to start_epoch, then linearly decay to end_lr."""
@@ -447,7 +502,7 @@ def main(argv):
 
     # Do the training
     max_grad_norm = config["training"].get("max_grad_norm", None)
-    save_every    = config["training"].get("save_frequency", 1000)
+    save_every    = 200
     val_every     = config["validation"].get("frequency", 1000)
 
     min_val_loss       = float("inf")

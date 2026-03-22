@@ -13,10 +13,12 @@ _MOUT = os.path.join(_BASE, "3d_layout_generation", "MiDiffusion", "output")
 # Named runs: display_name -> absolute directory path
 NAMED_RUNS = {
     "pretrained": os.path.join(_MOUT, "predicted_results", "test_pretrained_6k"),
-    "ddpo": os.path.join(_MOUT, "full_predicted_results", "ddpo_tv_bed", "stage92"),
-    "b2":   os.path.join(_MOUT, "full_predicted_results", "b2_tv_bed", "stage76"),
-    "ours": os.path.join(_MOUT, "full_predicted_results", "4_particles_incremental_branch_fk_tv_bed", "stage50"),
-    "ours_collision": os.path.join(_MOUT, "predicted_results", "4_particles_incremental_branch_fk"),
+    # "ours": os.path.join(_MOUT, "full_predicted_results", "universal_only_oob_area", "stage92"),
+    "ours": os.path.join(_MOUT, "full_predicted_results", "tv_bed_top_of_universal", "stage130"),
+    # "ddpo": os.path.join(_MOUT, "full_predicted_results", "ddpo_tv_bed", "stage92"),
+    # "b2":   os.path.join(_MOUT, "full_predicted_results", "b2_tv_bed", "stage76"),
+    # "ours": os.path.join(_MOUT, "full_predicted_results", "4_particles_incremental_branch_fk_tv_bed", "stage50"),
+    # "ours_collision": os.path.join(_MOUT, "predicted_results", "4_particles_incremental_branch_fk"),
 }
 
 app = Flask(__name__)
@@ -57,4 +59,4 @@ def serve_image(run_name, filename):
 if __name__ == "__main__":
     for name, path in NAMED_RUNS.items():
         print(f"  {name:6s} -> {path}")
-    app.run(host="0.0.0.0", port=5001, debug=False)
+    app.run(host="0.0.0.0", port=5005, debug=False)

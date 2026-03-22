@@ -127,7 +127,7 @@ def main(argv):
         action="store_true",
         help="Do not render walls"
     )
-    parser.add_argument(
+    parser.add_argument(    
         "--without_door",
         action="store_true",
         help="Do not render the door"
@@ -230,7 +230,12 @@ def main(argv):
     
     # Render projection images
     for i in tqdm(range(len(threed_front_results))):
-        if i not in [298, 0, 2, 13, 46, 55, 56, 62, 124, 147, 184, 224, 334, 413, 439, 729, 727]: continue # TODO: rm 
+        # if i not in [298, 0, 2, 13, 46, 55, 56, 62, 124, 147, 184, 224, 334, 413, 439, 729, 727]: continue # TODO: rm 
+        # if i not in [40, 77, 92, 111, 114, 125]: 
+        #     continue # TODO: rm
+
+        if i not in [30]:
+            continue # TODO: rm
         scene_idx = threed_front_results[i][0]
         image_path = path_to_image.format(
             i, threed_front_results.test_dataset[scene_idx].scene_id

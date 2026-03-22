@@ -1,5 +1,5 @@
 #!/bin/bash
-# Starts Flask API (port 5001) and Vite dev server (port 5173)
+# Starts Flask API (port 5005) and Vite dev server (port 5173)
 # Port-forward from  local machine: ssh -L 5173:localhost:5173 user@server
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,7 +12,7 @@ cd "$SCRIPT_DIR"
 npm install
 
 echo ""
-echo "Starting Flask API on :5001 ..."
+echo "Starting Flask API on :5005 ..."
 python "$SCRIPT_DIR/server.py" &
 FLASK_PID=$!
 

@@ -1,4 +1,4 @@
-run_name="universal_only_oob_area"
+run_name="tv_bed_only"
 python3 ./scripts/training/train_pipeline.py \
     exp_name=${run_name} \
     seed=42 \
@@ -14,4 +14,8 @@ python3 ./scripts/training/train_pipeline.py \
     train.incremental_training=true \
     sample.num_steps=20 \
     train.num_stages_per_increment=20 \
-    universal_rewards=true \
+    universal_rewards=false \
+    custom_reward="tv_bed" \
+    pipeline.stage_cnt=300 \
+    pipeline.continue_from_stage=100 \
+    resume_id="flgzret3" \
