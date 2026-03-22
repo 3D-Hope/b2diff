@@ -245,11 +245,14 @@ _BED_INDICES  = {8}  # double_bed, kids_bed, single_bed
 
 
 
-def _custom_reward_kwargs(room_type, floor_geometry=None):
+def _custom_reward_kwargs(room_type, floor_geometry=None, floor_polygons=None):
     kwargs = {
         "room_type": room_type,
         "idx_to_labels": _IDX_TO_LABEL_BEDROOM,
     }
+
+    if floor_polygons is not None:
+        kwargs["floor_polygons"] = floor_polygons
 
     if floor_geometry is not None:
         kwargs["floor_plan_vertices"] = [
@@ -283,7 +286,11 @@ def _compute_threed_reward_components(parsed, config, room_type, indices=None, f
             custom_reward_fn = _load_custom_reward_fn(reward_name)
             components[f"custom_{reward_name}"] = custom_reward_fn(
                 parsed,
-                **_custom_reward_kwargs(room_type=room_type, floor_geometry=floor_geometry),
+                **_custom_reward_kwargs(
+                    room_type=room_type,
+                    floor_geometry=floor_geometry,
+                    floor_polygons=floor_polygons,
+                ),
             )
         total_reward = sum(components.values())
         return total_reward, components, _custom_reward_mode_name(custom_reward_names)
@@ -300,9 +307,9 @@ def _compute_threed_reward_components(parsed, config, room_type, indices=None, f
             parsed,
             floor_polygons=floor_polygons,
         )
-        components["object_count"] = compute_object_count_reward(
-            parsed, mode=object_count_mode
-        )
+        # components["object_count"] = compute_object_count_reward(
+        #     parsed, mode=object_count_mode
+        # )
         components["accessibility"] = compute_accessibility_reward(
             parsed,
             indices=indices,
@@ -315,7 +322,11 @@ def _compute_threed_reward_components(parsed, config, room_type, indices=None, f
             custom_reward_fn = _load_custom_reward_fn(reward_name)
             components[f"custom_{reward_name}"] = custom_reward_fn(
                 parsed,
-                **_custom_reward_kwargs(room_type=room_type, floor_geometry=floor_geometry),
+                **_custom_reward_kwargs(
+                    room_type=room_type,
+                    floor_geometry=floor_geometry,
+                    floor_polygons=floor_polygons,
+                ),
             )
 
         total_reward = sum(components.values())
@@ -331,7 +342,11 @@ def _compute_threed_reward_components(parsed, config, room_type, indices=None, f
         tv_bed_reward_fn = _load_custom_reward_fn("tv_bed")
         components["tv_bed"] = tv_bed_reward_fn(
             parsed,
-            **_custom_reward_kwargs(room_type=room_type, floor_geometry=floor_geometry),
+            **_custom_reward_kwargs(
+                room_type=room_type,
+                floor_geometry=floor_geometry,
+                floor_polygons=floor_polygons,
+            ),
         )
     elif reward_mode == "boundary":
         if floor_polygons is None:
