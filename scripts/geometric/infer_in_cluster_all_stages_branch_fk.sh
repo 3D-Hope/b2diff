@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=infer_all_stages_branch_fk_geo_v2
+#SBATCH --job-name=infer_all_stages_branch_fk_geo
 #SBATCH --partition=batch
 #SBATCH --constraint=zone-sof1
 #SBATCH --gpus=h200:1
@@ -132,7 +132,7 @@ fi
 echo "Inference started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="geometric_branch_fk_v2"
+run_name="geometric_branch_fk"
 
 echo "Looking for stages in model/lora/${run_name}..."
 

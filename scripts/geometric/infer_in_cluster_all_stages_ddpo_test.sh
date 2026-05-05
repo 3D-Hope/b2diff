@@ -25,7 +25,8 @@ mkdir -p logs
 echo "──────────────────────────────────────────────────────────────────────────────"
 echo "Job started at: $(date)"
 echo "Running on node: $(hostname)"
-echo "Working directory: $(pwd)"
+echo "Working directory: $(pwd)"/home/ajad/Desktop/codes/iADD_renders/video_renders
+
 echo "Job ID: ${SLURM_JOB_ID:-N/A}"
 echo "──────────────────────────────────────────────────────────────────────────────"
 echo ""

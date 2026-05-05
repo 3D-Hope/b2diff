@@ -145,6 +145,10 @@ if [ -z "$stages" ]; then
 fi
 
 for stage_number in $stages; do
+    if (( stage_number % 5 != 0 )); then
+        continue
+    fi
+
     checkpoint_dir="model/lora/${run_name}/stage${stage_number}/checkpoints/checkpoint_1/"
     
     # Ensure checkpoint actually exists

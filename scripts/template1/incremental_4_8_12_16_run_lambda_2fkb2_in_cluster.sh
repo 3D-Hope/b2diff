@@ -166,7 +166,6 @@ run_name="new_incremental_4_8_12_16_only_lambda_2_fk_4particles"
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
     train.incremental_training=true \
-    train.only_train_steps=-1 \
     train.score_fn_training=false \
     sample.fk=true \
     sample.normalize_all=false \

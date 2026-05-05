@@ -400,7 +400,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--checkpoint_path",
         type=str,
-        default="/home/pramish_paudel/codes/b2diff/model/lora/norm_all_no_branching_no_selection_only_5_steps/stage16/checkpoints/checkpoint_1/",
+        default="./outputs/fkb2_try_yes_selection_corrected/checkpoint_1/",
         help="Path to LoRA checkpoint"
     )
     # b2diffu_try2
@@ -408,7 +408,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="/home/pramish_paudel/codes/b2diff/tmp",
+        default="outputs/fkb2_try_yes_selection_corrected/7ckpt/images",
         help="Output directory for images and results"
     )
     parser.add_argument(
@@ -420,13 +420,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_images",
         type=int,
-        default=1000,
+        default=1080,
         help="Number of images to generate"
     )
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=48,
+        default=4,
         help="Batch size for generation"
     )
     parser.add_argument(

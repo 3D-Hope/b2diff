@@ -14,7 +14,29 @@
                 "CUDA_VISIBLE_DEVICES": "0"
             },
             "args": [
-                "sample.num_batches_per_epoch=1"
+                "exp_name=test",
+                "sample.num_batches_per_epoch=1",
+                "train.score_fn_training=false",
+                "sample.fk=false",
+                "sample.normalize_all=false",
+                "sample.num_particles=2",
+                "sample.only_best_fk=true",
+                "sample.fk_mix_ratio=1",
+                "sample.potential_type=max",
+                "sample.fk_lambda=2.0",
+                "sample.resample_frequency=4",
+                "sample.resampling_t_start=8",
+                "sample.resampling_t_end=16",
+                "seed=69",
+                "train.learning_rate=3e-4",
+                "train.max_grad_norm=0.005",
+                "train.only_last_n_steps=-1",
+                "sample.batch_size=2",
+                "train.batch_size=2",
+                "wandb.enabled=False",
+                "sample.brach_at_before_fk=5",
+                "train.only_train_steps=10",
+                "train.incremental_training=true",
             ]
         }
     ]

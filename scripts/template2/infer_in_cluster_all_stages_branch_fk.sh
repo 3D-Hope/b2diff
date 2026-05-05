@@ -174,7 +174,6 @@ for stage_number in $stages; do
         --num_images 1080 \
         --batch_size 32 \
         --prompt_file "configs/prompt/template2_train.json"
-
 done
 
 # python3 ./scripts/inference/run_inception_score.py

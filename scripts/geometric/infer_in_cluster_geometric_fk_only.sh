@@ -132,13 +132,14 @@ fi
 echo "Training started at: ${START_TIME_READABLE}"
 echo "GPUs detected: ${NUM_GPUS}"
 
-run_name="template2_fk_only"
+run_name="geometric_fk_only"
 stage_number=36
-python3 ./scripts/inference/inference_lora_clip_reward.py \
+python3 scripts/inference/inference_lora_geometric_reward.py \
 --checkpoint_path /home/pramish_paudel/codes/b2diff/model/lora/${run_name}/stage${stage_number}/checkpoints/checkpoint_1/ \
 --output_dir ./outputs/${run_name}/stage${stage_number} \
 --num_images 1080 \
---batch_size 32
+--batch_size 32 \
+        --prompt_file "configs/prompt/template4_train.json"
 
 # rm -rf tmp/  
 # rm -rf tmp1/  
