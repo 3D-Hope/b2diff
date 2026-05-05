@@ -8,3 +8,16 @@ wandb/
 *.__pyc
 *.zip
 outputs/
+temp_outputs
+teaser_frames
+.venv
+saugat_viz_graveyard
+preference-study
+user_study_export
+video_images
+__MACOSX
+csvs
+docs
+figures
+rebuttal/
+*.pyc

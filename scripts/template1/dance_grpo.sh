@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=template2_ddpo
+#SBATCH --job-name=template1_dance_grpo
 #SBATCH --partition=batch
 #SBATCH --constraint=zone-msp3
 #SBATCH --gpus=h200:1
@@ -162,16 +162,14 @@ echo "GPUs detected: ${NUM_GPUS}"
     # pipeline.continue_from_stage=110 \
     # resume_id="tg2dp40a" \
 
-run_name="template2_ddpo"
+run_name="template1_dance_grpo"
 # sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward if boest_only_fk is false else only 4 particles for best reward only no worst
 # batch size for sampling 12 for only best and 6 for both best and worst
-# TODO: FIX BATCH SIZE
 python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
     seed=42 \
-    sample.always_branch_at= 0\
     split_time=16 \
-    sample.batch_size=3 \
+    sample.batch_size=8 \
     train.batch_size=16 \
     sample.num_batches_per_epoch=16 \
     train.learning_rate=3e-4 \

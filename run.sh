@@ -20,11 +20,11 @@
 #     --batch_size 4
 
 python3 ./scripts/training/train_pipeline.py \
-    exp_name=test69 \
+    exp_name=test70 \
     seed=42 \
     split_time=8 \
     sample.batch_size=2 \
-    train.batch_size=2 \
+    train.batch_size=1 \
     sample.num_batches_per_epoch=1 \
     train.learning_rate=3e-4 \
     train.max_grad_norm=0.005 \
@@ -34,3 +34,21 @@ python3 ./scripts/training/train_pipeline.py \
     prompt_file=configs/prompt/template1_train.json \
     pipeline.use_grpo=true \
     wandb.enabled=false
+
+
+
+# python3 ./scripts/training/train_pipeline.py \
+#     exp_name=test123 \
+#     seed=42 \
+#     split_time=1 \
+#     sample.batch_size=4 \
+#     train.batch_size=2 \
+#     sample.num_batches_per_epoch=1 \
+#     train.learning_rate=3e-4 \
+#     train.max_grad_norm=0.005 \
+#     train.incremental_training=false \
+#     sample.no_branching=true \
+#     sample.no_selection=true \
+#     train.incremental_timesteps=[4,8,12,16] \
+#     train.num_stages_per_increment=10 \
+#     prompt_file=configs/prompt/template2_train.json

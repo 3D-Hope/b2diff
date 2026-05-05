@@ -234,22 +234,34 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
         )
         
         # Prepare latents
-        noise_latents1 = pipeline.prepare_latents(
-            config.sample.batch_size, 
-            pipeline.unet.config.in_channels, ## channels
-            pipeline.unet.config.sample_size * pipeline.vae_scale_factor, ## height
-            pipeline.unet.config.sample_size * pipeline.vae_scale_factor, ## width
-            prompt_embeds1.dtype, 
-            accelerator.device, 
-            None ## generator
-        )
+        if config.pipeline.use_grpo:
+            noise_latents1 = pipeline.prepare_latents(
+                1, 
+                pipeline.unet.config.in_channels, ## channels
+                pipeline.unet.config.sample_size * pipeline.vae_scale_factor, ## height
+                pipeline.unet.config.sample_size * pipeline.vae_scale_factor, ## width
+                prompt_embeds1.dtype, 
+                accelerator.device, 
+                None ## generator
+            )
+            noise_latents1 = noise_latents1.repeat(config.sample.batch_size, 1,1,1)
+        else:
+            noise_latents1 = pipeline.prepare_latents(
+                config.sample.batch_size, 
+                pipeline.unet.config.in_channels, ## channels
+                pipeline.unet.config.sample_size * pipeline.vae_scale_factor, ## height
+                pipeline.unet.config.sample_size * pipeline.vae_scale_factor, ## width
+                prompt_embeds1.dtype, 
+                accelerator.device, 
+                None ## generator
+            )
         
         pipeline.scheduler.set_timesteps(config.sample.num_steps, device=accelerator.device)
         ts = pipeline.scheduler.timesteps
         extra_step_kwargs = pipeline.prepare_extra_step_kwargs(None, config.sample.eta)
         
         # For no_branching mode, prepare multiple different initial noises
-        if config.sample.no_branching:
+        if config.sample.no_branching and not config.pipeline.use_grpo:
             branch_num = split_times[0]  # Get branching factor
             noise_latents_list = [noise_latents1]  # Keep first noise
             for _ in range(branch_num - 1):
@@ -279,9 +291,12 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
             # sample
             with autocast():
                 with torch.no_grad():
-                    if not config.sample.no_branching and ((config.sample.num_steps-i) in split_steps):
-                        branch_num = split_steps.index(config.sample.num_steps-i)
-                        branch_num = split_times[branch_num]
+                    if (not config.sample.no_branching and ((config.sample.num_steps-i) in split_steps)) or (config.pipeline.use_grpo and t == ts[0]):
+                        # if config.pipeline.use_grpo: print(f"using grpo, splitting at {t}")
+                        if config.pipeline.use_grpo: branch_num = split_times[0]
+                        else:
+                            branch_num = split_steps.index(config.sample.num_steps-i)
+                            branch_num = split_times[branch_num]
                         cur_sample_num = len(latents)
                         # split the sample
                         latents = [

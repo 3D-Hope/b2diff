@@ -19,6 +19,8 @@ pipeline:
   split_step_right: 20
   save_interval: 2
   sleep_between_stages: 2
+  # grpo
+  use_grpo: false
 
 # Split settings (will be calculated per stage) for b2diffu-rl method
 split_step: 14
@@ -34,6 +36,7 @@ reward_fn: "clip"
 pretrained:
   model: "CompVis/stable-diffusion-v1-4"
   revision: "main"
+
 
 # Sampling configuration
 sample:

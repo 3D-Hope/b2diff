@@ -3,6 +3,7 @@ import torch
 import contextlib
 import copy
 import json
+import random
 import tree
 from functools import partial
 from tqdm import tqdm as tqdm_lib
@@ -162,13 +163,17 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     logger.info(f"  Number of gradient updates per inner epoch = {samples_per_epoch // total_train_batch_size}")
     logger.info(f"  Number of inner epochs = {config.train.num_inner_epochs}")
     
-    if not config.sample.fk:
+    if config.pipeline.use_grpo:
+        # In GRPO mode the real sample count is sample.batch_size * split_time
+        grpo_total_samples = config.sample.batch_size * config.split_time
+        assert grpo_total_samples >= config.train.batch_size, (
+            f"GRPO total samples ({grpo_total_samples}) must be >= train.batch_size ({config.train.batch_size})"
+        )
+    elif not config.sample.fk:
         assert config.sample.batch_size >= config.train.batch_size
-        
         assert config.sample.batch_size % config.train.batch_size == 0
     else:
         assert (config.sample.batch_size * 4 * 2) >= config.train.batch_size
-        
         assert (config.sample.batch_size * 4 * 2) % config.train.batch_size == 0
 
     # Load sample data
@@ -206,10 +211,24 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         GradRecord.append([])
         
         total_batch_size = init_samples["eval_scores"].shape[0]
-        perm = torch.randperm(total_batch_size)
         for k, v in init_samples.items():
             print(f"{k}: {v.shape}")
-        samples = {k: v[perm] for k, v in init_samples.items()}
+
+        if config.pipeline.use_grpo:
+            # GRPO samples are saved branch-major: [branch0 all prompts, branch1 all prompts, ...].
+            # Reorder them to prompt-major so each prompt's split_time completions are contiguous.
+            grpo_group_size = config.split_time
+            assert total_batch_size % grpo_group_size == 0, (
+                f"GRPO total samples ({total_batch_size}) must be divisible by split_time ({grpo_group_size})"
+            )
+            num_prompts = total_batch_size // grpo_group_size
+            samples = {}
+            for key, value in init_samples.items():
+                value = value.reshape(grpo_group_size, num_prompts, *value.shape[1:])
+                samples[key] = value.transpose(0, 1).reshape(total_batch_size, *value.shape[2:])
+        else:
+            perm = torch.randperm(total_batch_size)
+            samples = {k: v[perm] for k, v in init_samples.items()}
         
         
         
@@ -223,16 +242,30 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         
         # Training
         pipeline.unet.train()
+
+        effective_batch_size = int(config.train.batch_size)
+        if effective_batch_size <= 0:
+            raise ValueError(f"train.batch_size must be > 0, got {effective_batch_size}")
+        
+        if total_batch_size < effective_batch_size:
+            raise ValueError(
+                f"Not enough samples for one update: total_batch_size={total_batch_size}, "
+                f"train.batch_size={effective_batch_size}"
+            )
+
+        # Use exact mini-batches; drop any incomplete tail.
+        effective_total = (total_batch_size // effective_batch_size) * effective_batch_size
+
         for idx in tqdm(
-            range(0, total_batch_size // 2 * 2, config.train.batch_size),
+            range(0, effective_total, effective_batch_size),
             desc="Update",
             position=2,
             leave=False,
         ):
             LossRecord[epoch].append([])
             GradRecord[epoch].append([])
-            
-            sample = tree.map_structure(lambda value: value[idx:idx + config.train.batch_size].to(accelerator.device), samples)
+
+            sample = tree.map_structure(lambda value: value[idx:idx + effective_batch_size].to(accelerator.device), samples)
             
             sample_batch_size = sample["prompt_embeds"].shape[0]
             train_neg_prompt_embeds = neg_prompt_embed.repeat(sample_batch_size, 1, 1)
@@ -247,9 +280,17 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
                 timestep_indices = training_timesteps
                 if external_logger and accelerator.is_local_main_process and idx == 0:
                     external_logger.info(f"Training on {len(timestep_indices)}/{sample['timesteps'].shape[1]} timesteps: {timestep_indices}")
+            elif config.pipeline.use_grpo:
+                # Pick one random timestep from the first 60% of the trajectory.
+                # Wrap in a list so the `for t in timestep_indices` loop below works.
+                max_t = max(0, int(sample["timesteps"].shape[1] * 0.6) - 1)
+                timestep_indices = random.sample(range(max_t + 1), k=max_t + 1)
+                assert len(timestep_indices) == 12, f"Expected 12 timesteps for GRPO (split_time), got {len(timestep_indices)}"
             else:
                 timestep_indices = range(sample["timesteps"].shape[1])
             
+            if config.pipeline.use_grpo:
+                print(f"shape of the data = {sample['timesteps'].shape}")
             for t in tqdm(
                 timestep_indices,
                 desc="Timestep",
@@ -344,8 +385,8 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
                         (torch.abs(ratio - 1.0) > config.train.eps).float()
                     )
                     
-                    LossRecord[epoch][idx // config.train.batch_size].append(loss_value)
-                    GradRecord[epoch][idx // config.train.batch_size].append(grad_value)
+                    LossRecord[epoch][idx // effective_batch_size].append(loss_value)
+                    GradRecord[epoch][idx // effective_batch_size].append(grad_value)
                     
                     # Log to wandb (only if enabled)
                     if wandb_run and accelerator.is_main_process and config.wandb.enabled:
