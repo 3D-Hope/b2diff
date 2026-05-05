@@ -5,7 +5,7 @@
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
-#SBATCH --time=2-00:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
 
@@ -169,7 +169,7 @@ python3 ./scripts/training/train_pipeline.py \
     exp_name="${run_name}" \
     seed=42 \
     split_time=16 \
-    sample.batch_size=8 \
+    sample.batch_size=4 \
     train.batch_size=16 \
     sample.num_batches_per_epoch=16 \
     train.learning_rate=3e-4 \
