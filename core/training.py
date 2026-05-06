@@ -211,8 +211,8 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         GradRecord.append([])
         
         total_batch_size = init_samples["eval_scores"].shape[0]
-        for k, v in init_samples.items():
-            print(f"{k}: {v.shape}")
+        # for k, v in init_samples.items():
+        #     print(f"{k}: {v.shape}")
 
         if config.pipeline.use_grpo:
             # GRPO samples are saved branch-major: [branch0 all prompts, branch1 all prompts, ...].
@@ -291,11 +291,11 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
             else:
                 timestep_indices = range(sample["timesteps"].shape[1])
             
-            if config.pipeline.use_grpo:
-                print(f"shape of the data = {sample['timesteps'].shape}")
+            # if config.pipeline.use_grpo:
+            #     print(f"shape of the data = {sample['timesteps'].shape}")
 
-            if config.pipeline.use_iadd_grpo:
-                print(f"number of timesteps in iADD-GRPO = {len(timestep_indices)}")
+            # if config.pipeline.use_iadd_grpo:
+            #     print(f"number of timesteps in iADD-GRPO = {len(timestep_indices)}")
             for t in tqdm(
                 timestep_indices,
                 desc="Timestep",
