@@ -331,15 +331,27 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
         
         # Prepare latents
         if config.sample.fk:
-            noise_latents1 = pipeline.prepare_latents(
-            config.sample.batch_size * num_particles * particle_multiplier, 
-            pipeline.unet.config.in_channels, ## channels
-            pipeline.unet.config.sample_size * pipeline.vae_scale_factor, ## height
-            pipeline.unet.config.sample_size * pipeline.vae_scale_factor, ## width
-            prompt_embeds1.dtype, 
-            accelerator.device, 
-            None ## generator
-        )
+            if config.pipeline.use_iadd_grpo:
+                noise_latents1 = pipeline.prepare_latents(
+                    1, 
+                    pipeline.unet.config.in_channels, ## channels
+                    pipeline.unet.config.sample_size * pipeline.vae_scale_factor, ## height
+                    pipeline.unet.config.sample_size * pipeline.vae_scale_factor, ## width
+                    prompt_embeds1.dtype, 
+                    accelerator.device, 
+                    None ## generator
+                )
+                noise_latents1 = noise_latents1.repeat(config.sample.batch_size * num_particles * particle_multiplier, 1, 1, 1)
+            else:
+                noise_latents1 = pipeline.prepare_latents(
+                    config.sample.batch_size * num_particles * particle_multiplier, 
+                    pipeline.unet.config.in_channels, ## channels
+                    pipeline.unet.config.sample_size * pipeline.vae_scale_factor, ## height
+                    pipeline.unet.config.sample_size * pipeline.vae_scale_factor, ## width
+                    prompt_embeds1.dtype, 
+                    accelerator.device, 
+                    None ## generator
+                )
         else:
             noise_latents1 = pipeline.prepare_latents(
                 config.sample.batch_size, 
@@ -436,11 +448,12 @@ def run_fk_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipelin
                             ]
                     
                         
-                    for k in range(len(latents)): 
+                    for k in range(len(latents)):
                         latents_t = latents[k][i]
                         latents_input = torch.cat([latents_t] * 2) if config.sample.cfg else latents_t
                         latents_input = pipeline.scheduler.scale_model_input(latents_input, t)
 
+                        print(f" {k=} shape of inputs {latents_input.shape} prompts {len(prompts1)}")
                         noise_pred = pipeline.unet(
                             latents_input,
                             t,

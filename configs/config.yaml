@@ -21,6 +21,7 @@ pipeline:
   sleep_between_stages: 2
   # grpo
   use_grpo: false
+  use_iadd_grpo: false
 
 # Split settings (will be calculated per stage) for b2diffu-rl method
 split_step: 14

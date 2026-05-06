@@ -226,6 +226,8 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
             for key, value in init_samples.items():
                 value = value.reshape(grpo_group_size, num_prompts, *value.shape[1:])
                 samples[key] = value.transpose(0, 1).reshape(total_batch_size, *value.shape[2:])
+        elif config.pipeline.use_iadd_grpo:
+            samples = init_samples  # iADD-GRPO samples are already in prompt-major order, no shuffling needed, and no permuation needed.
         else:
             perm = torch.randperm(total_batch_size)
             samples = {k: v[perm] for k, v in init_samples.items()}
@@ -291,6 +293,9 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
             
             if config.pipeline.use_grpo:
                 print(f"shape of the data = {sample['timesteps'].shape}")
+
+            if config.pipeline.use_iadd_grpo:
+                print(f"number of timesteps in iADD-GRPO = {len(timestep_indices)}")
             for t in tqdm(
                 timestep_indices,
                 desc="Timestep",
