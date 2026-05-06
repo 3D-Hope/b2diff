@@ -135,17 +135,12 @@ echo "GPUs detected: ${NUM_GPUS}"
 
 run_name="template1_dance_grpo"
 
-echo "Looking for stages in model/lora/${run_name}..."
+# Stages to evaluate — edit this array as needed
+STAGES=(15 20 25)
 
-# Find all stage directories and extract the number, sorted
-stages=$(find "model/lora/${run_name}" -maxdepth 1 -type d -name "stage*" | sed -n 's/.*stage\([0-9]*\)/\1/p' | sort -n)
+echo "Evaluating stages: ${STAGES[*]}"
 
-if [ -z "$stages" ]; then
-    echo "❌ No stages found for run_name=${run_name}"
-    exit 1
-fi
-
-for stage_number in $stages; do
+for stage_number in "${STAGES[@]}"; do
     checkpoint_dir="model/lora/${run_name}/stage${stage_number}/checkpoints/checkpoint_1/"
 
     if [ ! -d "$checkpoint_dir" ]; then
