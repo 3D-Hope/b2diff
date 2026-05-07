@@ -4,7 +4,8 @@
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
-#SBATCH --time=1-00:00:00
+#SBATCH --qos=neurips-2026
+#SBATCH --time=1-12:00:00
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
 
@@ -169,7 +170,7 @@ python3 ./scripts/training/train_pipeline.py \
     seed=42 \
     sample.batch_size=2 \
     train.batch_size=16 \
-    sample.num_batches_per_epoch=32 \
+    sample.num_batches_per_epoch=16 \
     train.learning_rate=3e-4 \
     train.max_grad_norm=0.005 \
     train.incremental_training=true \
@@ -188,7 +189,9 @@ python3 ./scripts/training/train_pipeline.py \
     sample.resampling_t_end=16 \
     sample.brach_at_before_fk=5 \
     train.incremental_timesteps=[5,10,15,20] \
-    train.num_stages_per_increment=10
+    train.num_stages_per_increment=10 \
+    resume_id="e9hotfty" \
+    pipeline.continue_from_stage=48
 
 # ------------------------------------------------------------------------------
 # Timing summary
