@@ -2,6 +2,7 @@
 #SBATCH --job-name=template1_dance_grpo
 #SBATCH --partition=batch
 #SBATCH --constraint=zone-msp3
+#SBATCH --qos=neurips-2026
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
@@ -178,7 +179,10 @@ python3 ./scripts/training/train_pipeline.py \
     sample.no_branching=true \
     sample.no_selection=true \
     prompt_file=configs/prompt/template1_train.json \
-    pipeline.use_grpo=true
+    pipeline.use_grpo=true \
+    resume_id="twjjwsqj" \
+    pipeline.continue_from_stage=70
+
 
 # ------------------------------------------------------------------------------
 # Timing summary
