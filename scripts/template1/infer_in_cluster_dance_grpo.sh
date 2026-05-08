@@ -1,7 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=infer_template1_dance_grpo
 #SBATCH --partition=batch
-#SBATCH --constraint=zone-sof1
+#SBATCH --qos=neurips-2026
+#SBATCH --constraint=zone-msp3
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
