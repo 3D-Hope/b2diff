@@ -19,21 +19,21 @@
 #     --num_images 32 \
 #     --batch_size 4
 
-python3 ./scripts/training/train_pipeline.py \
-    exp_name=test70 \
-    seed=42 \
-    split_time=8 \
-    sample.batch_size=2 \
-    train.batch_size=1 \
-    sample.num_batches_per_epoch=1 \
-    train.learning_rate=3e-4 \
-    train.max_grad_norm=0.005 \
-    train.incremental_training=false \
-    sample.no_branching=true \
-    sample.no_selection=true \
-    prompt_file=configs/prompt/template1_train.json \
-    pipeline.use_grpo=true \
-    wandb.enabled=false
+# python3 ./scripts/training/train_pipeline.py \
+#     exp_name=test70 \
+#     seed=42 \
+#     split_time=8 \
+#     sample.batch_size=2 \
+#     train.batch_size=1 \
+#     sample.num_batches_per_epoch=1 \
+#     train.learning_rate=3e-4 \
+#     train.max_grad_norm=0.005 \
+#     train.incremental_training=false \
+#     sample.no_branching=true \
+#     sample.no_selection=true \
+#     prompt_file=configs/prompt/template1_train.json \
+#     pipeline.use_grpo=true \
+#     wandb.enabled=false
 
 
 
@@ -52,3 +52,28 @@ python3 ./scripts/training/train_pipeline.py \
 #     train.incremental_timesteps=[4,8,12,16] \
 #     train.num_stages_per_increment=10 \
 #     prompt_file=configs/prompt/template2_train.json
+
+python3 ./scripts/training/train_pipeline.py \
+    exp_name=test70 \
+    seed=42 \
+    sample.batch_size=1 \
+    train.batch_size=1 \
+    sample.num_batches_per_epoch=1 \
+    wandb.enabled=false \
+    train.incremental_training=true \
+    sample.no_branching=false \
+    sample.no_selection=true \
+    prompt_file=configs/prompt/template1_train.json \
+    pipeline.use_iadd_grpo=true \
+    sample.fk=true \
+    sample.num_particles=2 \
+    sample.only_best_fk=true \
+    sample.fk_mix_ratio=1 \
+    sample.potential_type="max" \
+    sample.fk_lambda=2.0 \
+    sample.resample_frequency=4 \
+    sample.resampling_t_start=8 \
+    sample.resampling_t_end=16 \
+    sample.brach_at_before_fk=5 \
+    train.incremental_timesteps=[5,10,15,20] \
+    train.num_stages_per_increment=10

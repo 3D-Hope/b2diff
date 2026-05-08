@@ -135,8 +135,10 @@ echo "GPUs detected: ${NUM_GPUS}"
 
 run_name="template1_dance_grpo"
 
-# Stages to evaluate — edit this array as needed
-STAGES=(15 20 25)
+# All 100 checkpoints with step of 5, ending at 99
+STAGES=($(seq 0 5 95) 99)
+# All stages: STAGES=($(seq 0 99))
+# Specific stages: STAGES=(0 5 10 15 20 25 30)
 
 echo "Evaluating stages: ${STAGES[*]}"
 
@@ -145,6 +147,11 @@ for stage_number in "${STAGES[@]}"; do
 
     if [ ! -d "$checkpoint_dir" ]; then
         echo "⚠️ Skipping stage${stage_number}: $checkpoint_dir not found."
+        continue
+    fi
+
+    if [ -f "./outputs/${run_name}/stage${stage_number}/clip_rewards.json" ]; then
+        echo "✅ stage${stage_number}: already done, skipping."
         continue
     fi
 
