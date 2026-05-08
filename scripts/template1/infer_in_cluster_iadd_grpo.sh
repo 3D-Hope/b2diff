@@ -1,0 +1,184 @@
+#!/bin/bash
+#SBATCH --job-name=infer_template1_iadd_grpo
+#SBATCH --partition=batch
+#SBATCH --qos=neurips-2026
+#SBATCH --constraint=zone-msp3
+#SBATCH --gpus=h200:1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem-per-cpu=12G
+#SBATCH --time=2-00:00:00
+#SBATCH --output=logs/%x-%j.out
+#SBATCH --error=logs/%x-%j.err
+
+set -euo pipefail
+
+trap 'ERR_CODE=$?; echo "Error on line ${LINENO}. Exit code: ${ERR_CODE}" >&2; exit ${ERR_CODE}' ERR
+trap 'echo "Job interrupted"; exit 130' INT
+
+mkdir -p logs
+
+echo "──────────────────────────────────────────────────────────────────────────────"
+echo "Job started at: $(date)"
+echo "Running on node: $(hostname)"
+echo "Working directory: $(pwd)"
+echo "Job ID: ${SLURM_JOB_ID:-N/A}"
+echo "──────────────────────────────────────────────────────────────────────────────"
+echo ""
+
+export WANDB_ENTITY="pramish-paudel-insait"
+
+# ------------------------------------------------------------------------------
+# STAGE 3: Miniforge / Conda
+# ------------------------------------------------------------------------------
+echo "STAGE 3: Setting up Miniforge (if missing)..."
+
+CONDA_DIR="/scratch/pramish_paudel/tools/miniforge"
+
+if [[ ! -d "${CONDA_DIR}" ]]; then
+    echo "Installing Miniforge to ${CONDA_DIR}..."
+    mkdir -p /scratch/pramish_paudel/tools
+    cd /scratch/pramish_paudel/tools
+
+    INSTALLER="Miniforge3-25.11.0-1-Linux-x86_64.sh"
+    wget -q --show-progress \
+        "https://github.com/conda-forge/miniforge/releases/download/25.11.0-1/${INSTALLER}" \
+        -O "${INSTALLER}"
+
+    bash "${INSTALLER}" -b -p "${CONDA_DIR}"
+    rm -f "${INSTALLER}"
+    echo "Miniforge installed at ${CONDA_DIR}"
+else
+    echo "Miniforge already exists at ${CONDA_DIR}"
+fi
+
+# Source conda
+if [[ -f "${CONDA_DIR}/etc/profile.d/conda.sh" ]]; then
+    source "${CONDA_DIR}/etc/profile.d/conda.sh"
+else
+    echo "conda.sh not found"
+    exit 1
+fi
+
+eval "$("${CONDA_DIR}/bin/conda" shell.bash hook)"
+
+# ------------------------------------------------------------------------------
+# STAGE 4: Conda env
+# ------------------------------------------------------------------------------
+echo "STAGE 4: Creating / activating conda env"
+
+CONDA_ENV_NAME="b2"
+DESIRED_PY="3.10"
+
+if ! conda env list | awk '{print $1}' | grep -qx "${CONDA_ENV_NAME}"; then
+    conda create -n "${CONDA_ENV_NAME}" python="${DESIRED_PY}" -y
+fi
+
+conda activate "${CONDA_ENV_NAME}"
+
+export PATH="${CONDA_PREFIX}/bin:${PATH}"
+hash -r
+
+echo "Environment verification:"
+which python
+python --version
+which pip
+echo ""
+
+# ------------------------------------------------------------------------------
+# STAGE 5: pip install
+# ------------------------------------------------------------------------------
+echo "STAGE 5: Installing Python dependencies"
+
+cd /home/pramish_paudel/codes/b2diff
+
+pip install uv
+uv pip install -r requirements.txt || {
+    echo "Dependency installation failed"
+    exit 1
+}
+uv pip install scipy
+pip uninstall setuptools -y
+pip install setuptools==80.9.0
+pip install opencv-python scikit-learn
+
+# ------------------------------------------------------------------------------
+# STAGE 9: GPU check
+# ------------------------------------------------------------------------------
+echo "STAGE 9: GPU check"
+nvidia-smi || echo "nvidia-smi unavailable"
+
+# ------------------------------------------------------------------------------
+# STAGE 10: Inference across selected stages
+# ------------------------------------------------------------------------------
+echo "STAGE 10: Starting inference across selected stages"
+
+export PYTHONUNBUFFERED=1
+export DISPLAY=:0
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+START_TIME=$(date +%s)
+START_TIME_READABLE=$(date '+%Y-%m-%d %H:%M:%S')
+
+if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    NUM_GPUS=$(echo "${CUDA_VISIBLE_DEVICES}" | tr ',' '\n' | wc -l)
+else
+    NUM_GPUS=$(nvidia-smi --list-gpus | wc -l || echo 1)
+fi
+
+echo "Inference started at: ${START_TIME_READABLE}"
+echo "GPUs detected: ${NUM_GPUS}"
+
+run_name="template1_iadd_grpo"
+
+# Gap-5 stages ending at 99 (0,5,...,95,99)
+STAGES=($(seq 0 5 95) 99)
+# All stages: STAGES=($(seq 0 99))
+# Specific stages: STAGES=(0 5 10 15 20 25 30)
+
+echo "Evaluating stages: ${STAGES[*]}"
+
+for stage_number in "${STAGES[@]}"; do
+    checkpoint_dir="model/lora/${run_name}/stage${stage_number}/checkpoints/checkpoint_1/"
+    output_dir="./outputs/${run_name}/stage${stage_number}"
+
+    if [ ! -d "$checkpoint_dir" ]; then
+        echo "Skipping stage${stage_number}: $checkpoint_dir not found."
+        continue
+    fi
+
+    if [ -f "${output_dir}/clip_rewards.json" ]; then
+        echo "stage${stage_number}: already done, skipping."
+        continue
+    fi
+
+    echo "================================================================"
+    echo "Running inference for stage ${stage_number}"
+    echo "================================================================"
+
+    python3 ./scripts/inference/inference_lora_clip_reward.py \
+        --checkpoint_path "$checkpoint_dir" \
+        --output_dir      "$output_dir" \
+        --num_images      1080 \
+        --batch_size      32
+done
+
+# ------------------------------------------------------------------------------
+# Timing summary
+# ------------------------------------------------------------------------------
+END_TIME=$(date +%s)
+ELAPSED_SECONDS=$((END_TIME - START_TIME))
+ELAPSED_HOURS=$(awk "BEGIN {printf \"%.4f\", ${ELAPSED_SECONDS}/3600}")
+GPU_HOURS=$(awk "BEGIN {printf \"%.4f\", ${ELAPSED_HOURS}*${NUM_GPUS}}")
+
+TIMING_LOG="logs/${run_name}_all_stages_timing.txt"
+
+{
+echo "Experiment: ${run_name}"
+echo "Start time: ${START_TIME_READABLE}"
+echo "End time:   $(date '+%Y-%m-%d %H:%M:%S')"
+echo "GPUs used:  ${NUM_GPUS}"
+echo "Wall time:  ${ELAPSED_SECONDS}s"
+echo "GPU hours:  ${GPU_HOURS}"
+} > "${TIMING_LOG}"
+
+echo "All stages inference completed successfully"
