@@ -117,7 +117,6 @@ def _save_tree_artifacts(save_dir, tree_data, prompts_for_images, image_tensors)
 
     torch.save(tree_data, os.path.join(save_dir, "branch_grpo_tree.pt"))
 
-
 def run_branch_grpo_sampling(
     config,
     stage_idx=None,
@@ -239,6 +238,7 @@ def run_branch_grpo_sampling(
     else:
         inference_dtype = torch.float32
     timesteps = pipeline.scheduler.timesteps
+    extra_step_kwargs = pipeline.prepare_extra_step_kwargs(None, config.sample.eta)
 
     neg_prompt_embed = pipeline.text_encoder(
         pipeline.tokenizer(
@@ -288,6 +288,16 @@ def run_branch_grpo_sampling(
             batch_idx = global_prompt_idx
             global_prompt_idx += 1
 
+            prompt_embeds_combine = pipeline._encode_prompt(
+                None,
+                accelerator.device,
+                1,
+                config.sample.cfg,
+                None,
+                prompt_embeds=prompt_embeds[idx : idx + 1],
+                negative_prompt_embeds=neg_prompt_embed,
+            ).to(inference_dtype)
+
             root_latent = pipeline.prepare_latents(
                 1,
                 pipeline.unet.config.in_channels,
@@ -322,13 +332,11 @@ def run_branch_grpo_sampling(
                     latent = latent_data[node.node_id].to(accelerator.device, dtype=inference_dtype)
 
                     if config.sample.cfg:
-                        embeds = torch.cat([neg_prompt_embed, prompt_embeds[idx : idx + 1]], dim=0)
+                        embeds = prompt_embeds_combine
                         latents_input = torch.cat([latent] * 2)
-                        timesteps_input = torch.cat([t.unsqueeze(0)] * 2)
                     else:
-                        embeds = prompt_embeds[idx : idx + 1]
+                        embeds = prompt_embeds_combine
                         latents_input = latent
-                        timesteps_input = t.unsqueeze(0)
 
                     latents_input = pipeline.scheduler.scale_model_input(latents_input, t)
                     latents_input = latents_input.to(inference_dtype)
@@ -337,7 +345,7 @@ def run_branch_grpo_sampling(
                         with autocast():
                             noise_pred = pipeline.unet(
                                 latents_input,
-                                timesteps_input,
+                                t,
                                 encoder_hidden_states=embeds,
                                 return_dict=False,
                             )[0]
@@ -348,25 +356,42 @@ def run_branch_grpo_sampling(
                             noise_pred_text - noise_pred_uncond
                         )
 
+                    eta = extra_step_kwargs.get("eta", config.sample.eta)
                     prev_sample_mean, std_dev_t = _compute_prev_sample_mean_and_std(
                         pipeline.scheduler,
                         noise_pred,
                         t,
                         latent,
-                        eta=config.sample.eta,
+                        eta=eta,
                     )
 
                     num_children = branch_factor if should_split else 1
-                    noise_scale = split_noise_scale if should_split else 1.0
-
-                    for split_idx in range(num_children):
-                        noise = randn_tensor(
+                    corr_scale = split_noise_scale if should_split else 0.0
+                    if should_split:
+                        shared_noise = randn_tensor(
                             prev_sample_mean.shape,
                             generator=None,
                             device=prev_sample_mean.device,
                             dtype=prev_sample_mean.dtype,
                         )
-                        noise = noise * noise_scale
+                        corr_denom = (1.0 + corr_scale * corr_scale) ** 0.5
+
+                    for split_idx in range(num_children):
+                        if should_split:
+                            branch_noise = randn_tensor(
+                                prev_sample_mean.shape,
+                                generator=None,
+                                device=prev_sample_mean.device,
+                                dtype=prev_sample_mean.dtype,
+                            )
+                            noise = (shared_noise + corr_scale * branch_noise) / corr_denom
+                        else:
+                            noise = randn_tensor(
+                                prev_sample_mean.shape,
+                                generator=None,
+                                device=prev_sample_mean.device,
+                                dtype=prev_sample_mean.dtype,
+                            )
                         prev_sample = prev_sample_mean + std_dev_t * noise
                         log_prob = _compute_log_prob(prev_sample, prev_sample_mean, std_dev_t)
 
