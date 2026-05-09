@@ -227,15 +227,17 @@ def run_branch_grpo_training(
                                 dim=0,
                             )
                             latents_input = torch.cat([micro_parent_latents] * 2)
+                            micro_timesteps_input = torch.cat([micro_timesteps] * 2)
                         else:
                             embeds = prompt_embeds
                             latents_input = micro_parent_latents
+                            micro_timesteps_input = micro_timesteps
 
-                        latents_input = pipeline.scheduler.scale_model_input(latents_input, micro_timesteps)
+                        latents_input = pipeline.scheduler.scale_model_input(latents_input, micro_timesteps_input)
                         with autocast():
                             noise_pred = pipeline.unet(
                                 latents_input,
-                                micro_timesteps,
+                                micro_timesteps_input,
                                 encoder_hidden_states=embeds,
                             ).sample
 
