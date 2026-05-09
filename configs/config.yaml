@@ -32,7 +32,7 @@ branch_grpo:
   depth_pruning: true
   depth_pruning_depths: [16, 17, 18, 19]
   edge_microbatch_size: 16
-   : 2
+  pruning_slide_interval_stages: 2
   pruning_stop_depth: 12
   save_tree: true
   save_edges: true
