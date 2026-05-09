@@ -228,7 +228,6 @@ def run_branch_grpo_training(
                             timesteps_input = micro_timesteps
 
                         latents_input = pipeline.scheduler.scale_model_input(latents_input, timesteps_input)
-                        print(f"latents {latents_input.shape}")
                         with autocast():
                             noise_pred = pipeline.unet(
                                 latents_input,
