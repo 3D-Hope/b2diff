@@ -64,6 +64,8 @@ def run_branch_grpo_training(
         raise ValueError("Pipeline and trainable_layers must be provided for BranchGRPO training")
 
     edge_data = _load_edges(save_dir)
+    if external_logger:
+        external_logger.info(f"Loaded {edge_data['parent_latents'].shape[0]} edges for training")
 
     accelerator_config = ProjectConfiguration(
         project_dir=save_dir,
@@ -152,18 +154,18 @@ def run_branch_grpo_training(
         )
 
     LossRecord = []
+    MetricsRecord = []  # Track all metrics: loss, grad_norm, ratio stats, advantage stats, leaf rewards
 
     global_step = 0
 
     for epoch in range(config.train.num_epochs):
         LossRecord.append([])
-        tree_perm = torch.randperm(len(tree_ids)).tolist()
-        shuffled_tree_ids = [tree_ids[i] for i in tree_perm]
-        effective_tree_total = (len(shuffled_tree_ids) // trees_per_batch) * trees_per_batch
+        MetricsRecord.append({})
+        effective_tree_total = (len(tree_ids) // trees_per_batch) * trees_per_batch
 
         for batch_start in range(0, effective_tree_total, trees_per_batch):
             LossRecord[epoch].append([])
-            batch_tree_ids = shuffled_tree_ids[batch_start : batch_start + trees_per_batch]
+            batch_tree_ids = tree_ids[batch_start : batch_start + trees_per_batch]
 
             tree_losses = []
             tree_clipfracs = []
@@ -172,7 +174,6 @@ def run_branch_grpo_training(
             with accelerator.accumulate(pipeline.unet):
                 for tree_id in batch_tree_ids:
                     indices = torch.tensor(tree_to_indices[tree_id], dtype=torch.long)
-                    indices = indices[torch.randperm(indices.numel())]
 
                     parent_latents = edge_data["parent_latents"][indices].to(accelerator.device)
                     child_latents = edge_data["child_latents"][indices].to(accelerator.device)
@@ -203,6 +204,11 @@ def run_branch_grpo_training(
                     tree_loss_accum = torch.tensor(0.0, device=accelerator.device)
                     tree_clipfrac_accum = []
                     tree_adv_accum = []
+                    tree_ratio_means = []
+                    tree_ratio_stds = []
+                    tree_ratio_maxs = []
+                    tree_kl_divs = []
+                    tree_leaf_rewards = []  # Track rewards of leaf nodes (max depth edges)
 
                     for start in range(0, total_tree_edges, edge_microbatch_size):
                         end = min(start + edge_microbatch_size, total_tree_edges)
@@ -221,17 +227,15 @@ def run_branch_grpo_training(
                                 dim=0,
                             )
                             latents_input = torch.cat([micro_parent_latents] * 2)
-                            timesteps_input = torch.cat([micro_timesteps] * 2)
                         else:
                             embeds = prompt_embeds
                             latents_input = micro_parent_latents
-                            timesteps_input = micro_timesteps
 
-                        latents_input = pipeline.scheduler.scale_model_input(latents_input, timesteps_input)
+                        latents_input = pipeline.scheduler.scale_model_input(latents_input, micro_timesteps)
                         with autocast():
                             noise_pred = pipeline.unet(
                                 latents_input,
-                                timesteps_input,
+                                micro_timesteps,
                                 encoder_hidden_states=embeds,
                             ).sample
 
@@ -263,6 +267,25 @@ def run_branch_grpo_training(
                                 1.0 + config.train.eps,
                             )
                             micro_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
+                            
+                            # Compute metrics for this microbatch
+                            with torch.no_grad():
+                                # Ratio statistics
+                                ratio_np = ratio.detach().cpu()
+                                tree_ratio_means.append(ratio_np.mean().item())
+                                tree_ratio_stds.append(ratio_np.std().item())
+                                tree_ratio_maxs.append(ratio_np.max().item())
+                                
+                                # KL divergence estimate
+                                approx_kl = 0.5 * torch.mean((new_log_prob - micro_old_log_probs) ** 2)
+                                tree_kl_divs.append(approx_kl.detach().cpu().item())
+                                
+                                # Track leaf rewards (edges at max depth in this microbatch)
+                                max_depth_in_batch = child_depth[start:end].max()
+                                max_depth_mask = (child_depth[start:end] == max_depth_in_batch)
+                                if max_depth_mask.any():
+                                    leaf_rewards = micro_advantages[max_depth_mask]
+                                    tree_leaf_rewards.append(leaf_rewards.mean().detach().cpu().item())
 
                         weight = (end - start) / float(total_tree_edges)
                         accelerator.backward(micro_loss * weight)
@@ -281,29 +304,110 @@ def run_branch_grpo_training(
                     continue
 
                 batch_loss = torch.stack(tree_losses).mean()
+                
+                # Compute batch-level metrics
+                batch_ratio_mean = sum(tree_ratio_means) / max(len(tree_ratio_means), 1)
+                batch_ratio_std = sum(tree_ratio_stds) / max(len(tree_ratio_stds), 1)
+                batch_ratio_max = max(tree_ratio_maxs) if tree_ratio_maxs else 0
+                batch_kl_div = sum(tree_kl_divs) / max(len(tree_kl_divs), 1)
+                batch_leaf_reward = sum(tree_leaf_rewards) / max(len(tree_leaf_rewards), 1) if tree_leaf_rewards else 0
+                
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(trainable_layers.parameters(), config.train.max_grad_norm)
+                    grad_norm = accelerator.clip_grad_norm_(trainable_layers.parameters(), config.train.max_grad_norm)
+                else:
+                    grad_norm = None
+                    
                 optimizer.step()
                 optimizer.zero_grad()
 
             LossRecord[epoch][-1].append(batch_loss.item())
 
-            if wandb_run and accelerator.is_main_process and config.wandb.enabled:
-                wandb_run.log({
-                    "branch_grpo/train_loss": batch_loss.item(),
-                    "branch_grpo/clipfrac": torch.stack(tree_clipfracs).mean().item(),
-                    "branch_grpo/adv_mean": torch.stack(tree_adv_means).mean().item(),
-                    "branch_grpo/step": global_step,
-                })
+            # Compute aggregated metrics for logging
+            if len(tree_losses) > 0:
+                batch_metrics = {
+                    "loss": batch_loss.item(),
+                    "clipfrac": torch.stack(tree_clipfracs).mean().item(),
+                    "adv_mean": torch.stack(tree_adv_means).mean().item(),
+                    "ratio_mean": batch_ratio_mean,
+                    "ratio_std": batch_ratio_std,
+                    "ratio_max": batch_ratio_max,
+                    "kl_div": batch_kl_div,
+                    "leaf_reward": batch_leaf_reward,
+                    "grad_norm": grad_norm.item() if grad_norm is not None else 0,
+                }
+                
+                if epoch not in MetricsRecord or not MetricsRecord[epoch]:
+                    MetricsRecord[epoch] = {
+                        "losses": [],
+                        "clipfracs": [],
+                        "adv_means": [],
+                        "ratio_means": [],
+                        "ratio_stds": [],
+                        "ratio_maxs": [],
+                        "kl_divs": [],
+                        "leaf_rewards": [],
+                        "grad_norms": [],
+                    }
+                MetricsRecord[epoch]["losses"].append(batch_metrics["loss"])
+                MetricsRecord[epoch]["clipfracs"].append(batch_metrics["clipfrac"])
+                MetricsRecord[epoch]["adv_means"].append(batch_metrics["adv_mean"])
+                MetricsRecord[epoch]["ratio_means"].append(batch_metrics["ratio_mean"])
+                MetricsRecord[epoch]["ratio_stds"].append(batch_metrics["ratio_std"])
+                MetricsRecord[epoch]["ratio_maxs"].append(batch_metrics["ratio_max"])
+                MetricsRecord[epoch]["kl_divs"].append(batch_metrics["kl_div"])
+                MetricsRecord[epoch]["leaf_rewards"].append(batch_metrics["leaf_reward"])
+                MetricsRecord[epoch]["grad_norms"].append(batch_metrics["grad_norm"])
+
+                if wandb_run and accelerator.is_main_process and config.wandb.enabled:
+                    wandb_run.log({
+                        "branch_grpo/train_loss": batch_metrics["loss"],
+                        "branch_grpo/clipfrac": batch_metrics["clipfrac"],
+                        "branch_grpo/adv_mean": batch_metrics["adv_mean"],
+                        "branch_grpo/ratio_mean": batch_metrics["ratio_mean"],
+                        "branch_grpo/ratio_std": batch_metrics["ratio_std"],
+                        "branch_grpo/ratio_max": batch_metrics["ratio_max"],
+                        "branch_grpo/kl_divergence": batch_metrics["kl_div"],
+                        "branch_grpo/leaf_reward_mean": batch_metrics["leaf_reward"],
+                        "branch_grpo/grad_norm": batch_metrics["grad_norm"],
+                        "branch_grpo/step": global_step,
+                    })
 
             global_step += 1
 
         if accelerator.is_main_process:
             if wandb_run and config.wandb.enabled:
                 epoch_losses = [item for sublist in LossRecord[epoch] for item in sublist]
-                if len(epoch_losses) > 0:
+                if len(epoch_losses) > 0 and epoch in MetricsRecord:
+                    epoch_metrics = MetricsRecord[epoch]
+                    epoch_loss_mean = sum(epoch_losses) / len(epoch_losses)
+                    epoch_loss_std = (sum((x - epoch_loss_mean)**2 for x in epoch_losses) / len(epoch_losses))**0.5 if len(epoch_losses) > 1 else 0
+                    
+                    def safe_mean(lst):
+                        return sum(lst) / max(len(lst), 1) if lst else 0
+                    
+                    def safe_std(lst, mean_val):
+                        return (sum((x - mean_val)**2 for x in lst) / len(lst))**0.5 if len(lst) > 1 else 0
+                    
+                    epoch_clipfrac_mean = safe_mean(epoch_metrics.get("clipfracs", []))
+                    epoch_adv_mean = safe_mean(epoch_metrics.get("adv_means", []))
+                    epoch_ratio_mean = safe_mean(epoch_metrics.get("ratio_means", []))
+                    epoch_ratio_std = safe_mean(epoch_metrics.get("ratio_stds", []))
+                    epoch_ratio_max = max(epoch_metrics.get("ratio_maxs", [0]))
+                    epoch_kl_mean = safe_mean(epoch_metrics.get("kl_divs", []))
+                    epoch_leaf_reward_mean = safe_mean(epoch_metrics.get("leaf_rewards", []))
+                    epoch_grad_norm_mean = safe_mean(epoch_metrics.get("grad_norms", []))
+                    
                     wandb_run.log({
-                        "branch_grpo/epoch_loss_mean": sum(epoch_losses) / len(epoch_losses),
+                        "branch_grpo/epoch_loss_mean": epoch_loss_mean,
+                        "branch_grpo/epoch_loss_std": epoch_loss_std,
+                        "branch_grpo/epoch_clipfrac_mean": epoch_clipfrac_mean,
+                        "branch_grpo/epoch_adv_mean": epoch_adv_mean,
+                        "branch_grpo/epoch_ratio_mean": epoch_ratio_mean,
+                        "branch_grpo/epoch_ratio_std": epoch_ratio_std,
+                        "branch_grpo/epoch_ratio_max": epoch_ratio_max,
+                        "branch_grpo/epoch_kl_divergence_mean": epoch_kl_mean,
+                        "branch_grpo/epoch_leaf_reward_mean": epoch_leaf_reward_mean,
+                        "branch_grpo/epoch_grad_norm_mean": epoch_grad_norm_mean,
                         "branch_grpo/epoch_completed": epoch + 1,
                     })
 
@@ -313,6 +417,8 @@ def run_branch_grpo_training(
     os.makedirs(os.path.join(save_dir, "eval"), exist_ok=True)
     with open(os.path.join(save_dir, "eval", "branch_grpo_loss.json"), "w") as f:
         json.dump(LossRecord, f)
+    with open(os.path.join(save_dir, "eval", "branch_grpo_metrics.json"), "w") as f:
+        json.dump(MetricsRecord, f)
 
     if external_logger:
         external_logger.info(f"BranchGRPO training completed for stage {stage_idx}")
