@@ -22,6 +22,22 @@ pipeline:
   # grpo
   use_grpo: false
   use_iadd_grpo: false
+  use_branch_grpo: false
+
+branch_grpo:
+  split_points: [0, 4, 8, 12]
+  branch_factor: 2
+  split_noise_scale: 8
+  reward_mode: "raw"
+  depth_pruning: true
+  depth_pruning_depths: [16, 17, 18, 19]
+  edge_microbatch_size: 16
+   : 2
+  pruning_stop_depth: 12
+  save_tree: true
+  save_edges: true
+  log_depth_stats: false
+  log_adv_histograms: false
 
 # Split settings (will be calculated per stage) for b2diffu-rl method
 split_step: 14

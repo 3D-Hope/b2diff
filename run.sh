@@ -53,27 +53,47 @@
 #     train.num_stages_per_increment=10 \
 #     prompt_file=configs/prompt/template2_train.json
 
+# python3 ./scripts/training/train_pipeline.py \
+#     exp_name=test70 \
+#     seed=42 \
+#     sample.batch_size=1 \
+#     train.batch_size=1 \
+#     sample.num_batches_per_epoch=1 \
+#     wandb.enabled=false \
+#     train.incremental_training=true \
+#     sample.no_branching=false \
+#     sample.no_selection=true \
+#     prompt_file=configs/prompt/template1_train.json \
+#     pipeline.use_iadd_grpo=true \
+#     sample.fk=true \
+#     sample.num_particles=2 \
+#     sample.only_best_fk=true \
+#     sample.fk_mix_ratio=1 \
+#     sample.potential_type="max" \
+#     sample.fk_lambda=2.0 \
+#     sample.resample_frequency=4 \
+#     sample.resampling_t_start=8 \
+#     sample.resampling_t_end=16 \
+#     sample.brach_at_before_fk=5 \
+#     train.incremental_timesteps=[5,10,15,20] \
+#     train.num_stages_per_increment=10
+
+
+
 python3 ./scripts/training/train_pipeline.py \
-    exp_name=test70 \
+    exp_name=test68 \
     seed=42 \
     sample.batch_size=1 \
     train.batch_size=1 \
-    sample.num_batches_per_epoch=1 \
-    wandb.enabled=false \
+    sample.num_batches_per_epoch=2 \
+    train.learning_rate=3e-4 \
+    train.max_grad_norm=0.005 \
     train.incremental_training=true \
     sample.no_branching=false \
     sample.no_selection=true \
     prompt_file=configs/prompt/template1_train.json \
-    pipeline.use_iadd_grpo=true \
-    sample.fk=true \
-    sample.num_particles=2 \
-    sample.only_best_fk=true \
-    sample.fk_mix_ratio=1 \
-    sample.potential_type="max" \
-    sample.fk_lambda=2.0 \
-    sample.resample_frequency=4 \
-    sample.resampling_t_start=8 \
-    sample.resampling_t_end=16 \
-    sample.brach_at_before_fk=5 \
-    train.incremental_timesteps=[5,10,15,20] \
-    train.num_stages_per_increment=10
+    pipeline.use_branch_grpo=true \
+    wandb.enabled=false \
+    branch_grpo.split_points=[0,4] \
+    branch_grpo.edge_microbatch_size=1
+

@@ -19,6 +19,9 @@ from core.fk_sampling import run_fk_sampling
 from core.mixed_sampling import run_mixed_sampling
 from core.selection import run_selection
 from core.training import run_training
+from core.branch_grpo_sampling import run_branch_grpo_sampling
+from core.branch_grpo_selection import run_branch_grpo_selection
+from core.branch_grpo_training import run_branch_grpo_training
 
 # Setup logging
 logging.basicConfig(
@@ -338,64 +341,94 @@ class TrainingPipeline:
                 f"stage{stage_idx}"
             )
             sample_pkl_path = os.path.join(expected_save_dir, 'sample.pkl')
-            
-            if os.path.exists(sample_pkl_path):
-                logger.info(f"[{stage_idx}] Sampling already completed (found {sample_pkl_path}), skipping...")
-                save_dir = expected_save_dir
-            else:
-                logger.info(f"[{stage_idx}] Running sampling...")
-                # Determine sampling mode: mixed (FK + vanilla), FK only, or vanilla only
-                if self.config.sample.fk and 0 < self.config.sample.fk_mix_ratio < 1.0:
-                    # Mixed sampling: combine FK and vanilla
-                    logger.info(f"[{stage_idx}] Using MIXED sampling (FK: {self.config.sample.fk_mix_ratio*100:.0f}%, Vanilla: {(1-self.config.sample.fk_mix_ratio)*100:.0f}%)")
-                    save_dir = run_mixed_sampling(
-                        stage_config, stage_idx, logger, 
-                        wandb_run=self.wandb_run,
-                        pipeline=self.pipeline,
-                        trainable_layers=self.trainable_layers,
-                        resume_from_ckpt=resume_from_ckpt
-                    )
-                elif self.config.sample.fk:
-                    # Pure FK sampling
-                    logger.info(f"[{stage_idx}] Using FK sampling only")
-                    save_dir = run_fk_sampling(
-                        stage_config, stage_idx, logger, 
-                        wandb_run=self.wandb_run,
-                        pipeline=self.pipeline,
-                        trainable_layers=self.trainable_layers,
-                        resume_from_ckpt=resume_from_ckpt
-                    )
+            branch_tree_path = os.path.join(expected_save_dir, 'branch_grpo_tree.pt')
+
+            if self.config.pipeline.use_branch_grpo:
+                if os.path.exists(branch_tree_path):
+                    logger.info(f"[{stage_idx}] BranchGRPO sampling already completed (found {branch_tree_path}), skipping...")
+                    save_dir = expected_save_dir
                 else:
-                    # Pure vanilla sampling
-                    logger.info(f"[{stage_idx}] Using vanilla sampling only")
-                    save_dir = run_sampling(
-                        stage_config, stage_idx, logger, 
+                    logger.info(f"[{stage_idx}] Running BranchGRPO sampling...")
+                    save_dir = run_branch_grpo_sampling(
+                        stage_config, stage_idx, logger,
                         wandb_run=self.wandb_run,
                         pipeline=self.pipeline,
                         trainable_layers=self.trainable_layers,
-                        resume_from_ckpt=resume_from_ckpt
+                        resume_from_ckpt=resume_from_ckpt,
                     )
-                logger.info(f"[{stage_idx}] Sampling completed")
+                    logger.info(f"[{stage_idx}] BranchGRPO sampling completed")
+            else:
+                if os.path.exists(sample_pkl_path):
+                    logger.info(f"[{stage_idx}] Sampling already completed (found {sample_pkl_path}), skipping...")
+                    save_dir = expected_save_dir
+                else:
+                    logger.info(f"[{stage_idx}] Running sampling...")
+                    # Determine sampling mode: mixed (FK + vanilla), FK only, or vanilla only
+                    if self.config.sample.fk and 0 < self.config.sample.fk_mix_ratio < 1.0:
+                        # Mixed sampling: combine FK and vanilla
+                        logger.info(f"[{stage_idx}] Using MIXED sampling (FK: {self.config.sample.fk_mix_ratio*100:.0f}%, Vanilla: {(1-self.config.sample.fk_mix_ratio)*100:.0f}%)")
+                        save_dir = run_mixed_sampling(
+                            stage_config, stage_idx, logger, 
+                            wandb_run=self.wandb_run,
+                            pipeline=self.pipeline,
+                            trainable_layers=self.trainable_layers,
+                            resume_from_ckpt=resume_from_ckpt
+                        )
+                    elif self.config.sample.fk:
+                        # Pure FK sampling
+                        logger.info(f"[{stage_idx}] Using FK sampling only")
+                        save_dir = run_fk_sampling(
+                            stage_config, stage_idx, logger, 
+                            wandb_run=self.wandb_run,
+                            pipeline=self.pipeline,
+                            trainable_layers=self.trainable_layers,
+                            resume_from_ckpt=resume_from_ckpt
+                        )
+                    else:
+                        # Pure vanilla sampling
+                        logger.info(f"[{stage_idx}] Using vanilla sampling only")
+                        save_dir = run_sampling(
+                            stage_config, stage_idx, logger, 
+                            wandb_run=self.wandb_run,
+                            pipeline=self.pipeline,
+                            trainable_layers=self.trainable_layers,
+                            resume_from_ckpt=resume_from_ckpt
+                        )
+                    logger.info(f"[{stage_idx}] Sampling completed")
             
             # Step 2: Selection
             logger.info(f"[{stage_idx}] Running selection...")
-            save_dir, metrics = run_selection(
-                stage_config, stage_idx, logger, 
-                wandb_run=self.wandb_run
-            )
+            if self.config.pipeline.use_branch_grpo:
+                save_dir, metrics = run_branch_grpo_selection(
+                    stage_config, stage_idx, logger,
+                    wandb_run=self.wandb_run,
+                )
+            else:
+                save_dir, metrics = run_selection(
+                    stage_config, stage_idx, logger, 
+                    wandb_run=self.wandb_run
+                )
             logger.info(f"[{stage_idx}] Selection completed")
             
             # Step 3: Training
             logger.info(f"[{stage_idx}] Running training...")
 
-            save_dir = run_training(
-                stage_config, stage_idx, logger, 
-                wandb_run=self.wandb_run,
-                pipeline=self.pipeline,
-                trainable_layers=self.trainable_layers,
-                training_timesteps=training_timestep_indices,
-                unet_copy=self.unet_copy,
-            )
+            if self.config.pipeline.use_branch_grpo:
+                save_dir = run_branch_grpo_training(
+                    stage_config, stage_idx, logger,
+                    wandb_run=self.wandb_run,
+                    pipeline=self.pipeline,
+                    trainable_layers=self.trainable_layers,
+                )
+            else:
+                save_dir = run_training(
+                    stage_config, stage_idx, logger, 
+                    wandb_run=self.wandb_run,
+                    pipeline=self.pipeline,
+                    trainable_layers=self.trainable_layers,
+                    training_timesteps=training_timestep_indices,
+                    unet_copy=self.unet_copy,
+                )
             logger.info(f"[{stage_idx}] Training completed")
             
             # Step 4: Cleanup temporary files to save disk space
