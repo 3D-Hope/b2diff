@@ -188,7 +188,7 @@ def run_branch_grpo_sampling(
 
     if resume_from_ckpt:
         prev_stage = stage_idx - 1
-        checkpoint_num = config.train.num_epochs // config.train.save_interval
+        checkpoint_num = 0
         checkpoint_path = os.path.join(
             config.save_path,
             config.exp_name,
