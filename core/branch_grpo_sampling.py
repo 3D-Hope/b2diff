@@ -186,7 +186,11 @@ def run_branch_grpo_sampling(
     accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
 
+    if trainable_layers is not None and not hasattr(trainable_layers, "_hf_hook"):
+        trainable_layers = accelerator.prepare(trainable_layers)
+
     if resume_from_ckpt:
+        print("loading model. Please Wait.")
         prev_stage = stage_idx - 1
         checkpoint_num = 0
         checkpoint_path = os.path.join(
@@ -205,13 +209,12 @@ def run_branch_grpo_sampling(
                 checkpoint_path,
                 sorted(checkpoints, key=lambda x: int(x.split("_")[-1]))[-1],
             )
+        print(f"Resuming from {checkpoint_path}")
         accelerator.load_state(checkpoint_path)
+        print("load successfully!")
 
     if config.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
-
-    if trainable_layers is not None and not hasattr(trainable_layers, "_hf_hook"):
-        trainable_layers = accelerator.prepare(trainable_layers)
 
     pipeline.unet.eval()
 
