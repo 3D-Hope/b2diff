@@ -1,4 +1,4 @@
-git #!/bin/bash
+#!/bin/bash
 #SBATCH --job-name=newoverfit_branch_template1_branch_grpo
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
