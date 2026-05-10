@@ -191,8 +191,8 @@ def run_branch_grpo_training(
                         1.0 - config.train.eps,
                         1.0 + config.train.eps,
                     )
-                    loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss)) / (effective_batch_size * accelerator.gradient_accumulation_steps)
-                    
+                    # loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss)) / (effective_batch_size * accelerator.gradient_accumulation_steps)
+                    loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
                 accelerator.backward(loss)  
                 total_norm = None
                 if accelerator.sync_gradients:
