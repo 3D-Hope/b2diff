@@ -238,7 +238,7 @@ def run_branch_grpo_training(
         json.dump(GradRecord, f)
 
     # Save checkpoint once every 45 stages
-    if stage_idx is not None and stage_idx > 0 and stage_idx % 45 == 0:
+    if stage_idx is not None and stage_idx > 0 and stage_idx % 5 == 0:
         accelerator.save_state()
         if external_logger:
             external_logger.info(f"Saved checkpoint correctly at stage {stage_idx}")

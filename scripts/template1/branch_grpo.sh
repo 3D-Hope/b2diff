@@ -177,7 +177,9 @@ python3 ./scripts/training/train_pipeline.py \
     sample.no_selection=true \
     prompt_file=configs/prompt/template1_train.json \
     pipeline.use_branch_grpo=true \
-    branch_grpo.edge_microbatch_size=16
+    branch_grpo.edge_microbatch_size=16 \
+    pipeline.stage_cnt=2500 \
+    pipeline.continue_from_stage=46 \
 
 
 # ------------------------------------------------------------------------------
