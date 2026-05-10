@@ -134,10 +134,10 @@ def run_branch_grpo_training(
         
         pipeline.unet.train()
         # shuffle edges at the start of each epoch
-        perm = torch.randperm(total_batch_size)
-        for k, v in init_samples.items():
-            if k == "prompt_embeds": continue
-            samples[k] = v[perm]
+        # perm = torch.randperm(total_batch_size)
+        # for k, v in init_samples.items():
+        #     if k == "prompt_embeds": continue
+        #     samples[k] = v[perm]
 
         effective_batch_size = edge_microbatch_size
         effective_total = (total_batch_size // effective_batch_size) * effective_batch_size

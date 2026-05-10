@@ -123,6 +123,7 @@ def run_branch_grpo_selection(config, stage_idx=None, logger=None, wandb_run=Non
     child_depths = []
     step_indices = []
     if config.branch_grpo.depth_pruning:
+        raise ValueError("depth pruning is not implemented yet")
         def _parse_stop_depth(config):
             stop_depth = config.branch_grpo.pruning_stop_depth
             return int(stop_depth)
