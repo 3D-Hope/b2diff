@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=branch_template1_branch_grpo
+#SBATCH --job-name=no_pruning_branch_template1_branch_grpo
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
@@ -162,7 +162,7 @@ echo "GPUs detected: ${NUM_GPUS}"
     # pipeline.continue_from_stage=110 \
     # resume_id="tg2dp40a" \
 
-run_name="branch_template1_branch_grpo"
+run_name="no_pruning_branch_template1_branch_grpo"
 # sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward if boest_only_fk is false else only 4 particles for best reward only no worst
 # batch size for sampling 12 for only best and 6 for both best and worst
 python3 ./scripts/training/train_pipeline.py \
@@ -178,8 +178,8 @@ python3 ./scripts/training/train_pipeline.py \
     prompt_file=configs/prompt/template1_train.json \
     pipeline.use_branch_grpo=true \
     branch_grpo.edge_microbatch_size=16 \
+    branch_grpo.depth_pruning=false \
     pipeline.stage_cnt=2500 \
-    pipeline.continue_from_stage=46 \
 
 
 # ------------------------------------------------------------------------------

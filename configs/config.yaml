@@ -29,7 +29,7 @@ branch_grpo:
   branch_factor: 2
   split_noise_scale: 8
   reward_mode: "raw"
-  depth_pruning: true
+  depth_pruning: false
   depth_pruning_depths: [17, 18, 19]
   edge_microbatch_size: 16
   pruning_slide_interval_stages: 90
