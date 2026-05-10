@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import time
@@ -7,6 +8,7 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import wandb
+import random
 
 # Add project root to path (2 levels up: scripts/training/ -> scripts/ -> root/)
 script_path = os.path.abspath(__file__)
@@ -79,6 +81,7 @@ class TrainingPipeline:
         
         # Load model ONCE for all stages
         self.load_model()
+        self.branch_grpo_avg_rewards = []
         
     
     def setup_directories(self):
@@ -344,19 +347,57 @@ class TrainingPipeline:
             branch_tree_path = os.path.join(expected_save_dir, 'branch_grpo_tree.pt')
 
             if self.config.pipeline.use_branch_grpo:
-                if os.path.exists(branch_tree_path):
-                    logger.info(f"[{stage_idx}] BranchGRPO sampling already completed (found {branch_tree_path}), skipping...")
-                    save_dir = expected_save_dir
-                else:
-                    logger.info(f"[{stage_idx}] Running BranchGRPO sampling...")
-                    save_dir = run_branch_grpo_sampling(
+                logger.info(f"[{stage_idx}] Using original BranchGRPO paradigm (1 tree per prompt)")
+                
+
+                prompt_file_path = stage_config.prompt_file
+                if not os.path.isabs(prompt_file_path):
+                    current_file = os.path.abspath(__file__)
+                    project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_file)))
+                    prompt_file_path = os.path.join(project_root, prompt_file_path)
+                with open(prompt_file_path) as f:
+                    prompt_list = json.load(f)
+            
+                
+                
+                # randomly sample one prompt
+                prompt = random.choice(prompt_list)
+                sample_dir = run_branch_grpo_sampling(
                         stage_config, stage_idx, logger,
                         wandb_run=self.wandb_run,
                         pipeline=self.pipeline,
                         trainable_layers=self.trainable_layers,
                         resume_from_ckpt=resume_from_ckpt,
+                        prompt=prompt,
                     )
-                    logger.info(f"[{stage_idx}] BranchGRPO sampling completed")
+                    
+                # Selection only return the mean of the leaves' rewards
+                select_dir, avg_reward = run_branch_grpo_selection(
+                    stage_config, stage_idx, logger,
+                    wandb_run=self.wandb_run,
+                )
+                metrics = {"mean_reward": avg_reward}
+
+                
+                # Training
+                save_dir = run_branch_grpo_training(
+                    stage_config, stage_idx, logger,
+                    wandb_run=self.wandb_run,
+                    pipeline=self.pipeline,
+                    trainable_layers=self.trainable_layers,
+                )
+                # TODO: accumulate mean reward for 45 stages and calc mean and plot
+                if len(self.branch_grpo_avg_rewards) == 50:
+                    average_reward_over_45_stages = sum(self.branch_grpo_avg_rewards) / 45
+                    if self.wandb_run:
+                        self.wandb_run.log({
+                            "branch_grpo/average_reward_over_45_stages": average_reward_over_45_stages
+                        })
+                    print(f"Average reward over 45 stages: {average_reward_over_45_stages}")
+                    self.branch_grpo_avg_rewards = []
+                else:
+                    self.branch_grpo_avg_rewards.append(avg_reward)
+
             else:
                 if os.path.exists(sample_pkl_path):
                     logger.info(f"[{stage_idx}] Sampling already completed (found {sample_pkl_path}), skipping...")
@@ -396,31 +437,17 @@ class TrainingPipeline:
                         )
                     logger.info(f"[{stage_idx}] Sampling completed")
             
-            # Step 2: Selection
-            logger.info(f"[{stage_idx}] Running selection...")
-            if self.config.pipeline.use_branch_grpo:
-                save_dir, metrics = run_branch_grpo_selection(
-                    stage_config, stage_idx, logger,
-                    wandb_run=self.wandb_run,
-                )
-            else:
+            # Step 2 & 3: Selection and Training
+            # (For BranchGRPO, these are already done per-tree in the loop above)
+            if not self.config.pipeline.use_branch_grpo:
+                logger.info(f"[{stage_idx}] Running selection...")
                 save_dir, metrics = run_selection(
                     stage_config, stage_idx, logger, 
                     wandb_run=self.wandb_run
                 )
-            logger.info(f"[{stage_idx}] Selection completed")
-            
-            # Step 3: Training
-            logger.info(f"[{stage_idx}] Running training...")
-
-            if self.config.pipeline.use_branch_grpo:
-                save_dir = run_branch_grpo_training(
-                    stage_config, stage_idx, logger,
-                    wandb_run=self.wandb_run,
-                    pipeline=self.pipeline,
-                    trainable_layers=self.trainable_layers,
-                )
-            else:
+                logger.info(f"[{stage_idx}] Selection completed")
+                
+                logger.info(f"[{stage_idx}] Running training...")
                 save_dir = run_training(
                     stage_config, stage_idx, logger, 
                     wandb_run=self.wandb_run,

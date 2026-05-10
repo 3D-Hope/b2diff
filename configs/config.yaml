@@ -30,9 +30,9 @@ branch_grpo:
   split_noise_scale: 8
   reward_mode: "raw"
   depth_pruning: true
-  depth_pruning_depths: [16, 17, 18, 19]
+  depth_pruning_depths: [17, 18, 19]
   edge_microbatch_size: 16
-  pruning_slide_interval_stages: 2
+  pruning_slide_interval_stages: 90
   pruning_stop_depth: 12
   save_tree: true
   save_edges: true

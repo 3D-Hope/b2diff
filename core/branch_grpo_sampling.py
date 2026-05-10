@@ -34,6 +34,7 @@ class TreeNode:
 
 
 def _left_broadcast(t, shape):
+    assert t.ndim <= len(shape)
     return t.reshape(t.shape + (1,) * (len(shape) - t.ndim)).broadcast_to(shape)
 
 
@@ -125,9 +126,9 @@ def run_branch_grpo_sampling(
     pipeline=None,
     trainable_layers=None,
     resume_from_ckpt=False,
+    prompt=None,
 ):
-    if logger:
-        logger.info(f"Starting BranchGRPO sampling for stage {stage_idx}")
+    
 
     torch.cuda.set_device(config.dev_id)
     seed_everything(config.seed)
@@ -135,6 +136,7 @@ def run_branch_grpo_sampling(
     unique_id = config.exp_name
     os.makedirs(os.path.join(config.save_path, unique_id), exist_ok=True)
     stage_id = f"stage{stage_idx}"
+    
     save_dir = os.path.join(config.save_path, unique_id, stage_id)
     os.makedirs(save_dir, exist_ok=True)
 
@@ -217,18 +219,6 @@ def run_branch_grpo_sampling(
     branch_factor = int(config.branch_grpo.branch_factor)
     split_noise_scale = float(config.branch_grpo.split_noise_scale)
 
-    prompt_list = []
-    if len(config.prompt) == 0:
-        prompt_file_path = config.prompt_file
-        if not os.path.isabs(prompt_file_path):
-            current_file = os.path.abspath(__file__)
-            project_root = os.path.dirname(os.path.dirname(current_file))
-            prompt_file_path = os.path.join(project_root, prompt_file_path)
-        with open(prompt_file_path) as f:
-            prompt_list = json.load(f)
-
-    prompt_idx = 0
-    prompt_cnt = len(prompt_list)
 
     pipeline.scheduler.set_timesteps(config.sample.num_steps, device=accelerator.device)
     if config.mixed_precision == "fp16":
@@ -262,173 +252,162 @@ def run_branch_grpo_sampling(
 
     prompt_pool = []
     prompt_embeds_pool = []
-    global_prompt_idx = 0
+    assert prompt is not None, "Prompt must be provided for BranchGRPO sampling"
+    single_prompt = prompt
+    prompt_ids = pipeline.tokenizer(
+        [single_prompt],
+        return_tensors="pt",
+        padding="max_length",
+        truncation=True,
+        max_length=pipeline.tokenizer.model_max_length,
+    ).input_ids.to(accelerator.device)
+    prompt_embeds = pipeline.text_encoder(prompt_ids)[0].to(inference_dtype)
 
-    for _ in range(config.sample.num_batches_per_epoch):
-        if len(config.prompt) != 0:
-            prompts = [config.prompt for _ in range(config.sample.batch_size)]
-        elif config.prompt_random_choose:
-            prompts = [random.choice(prompt_list) for _ in range(config.sample.batch_size)]
-        else:
-            prompts = [prompt_list[(prompt_idx + i) % prompt_cnt] for i in range(config.sample.batch_size)]
-            prompt_idx += config.sample.batch_size
+    prompt_pool.append(single_prompt)
+    prompt_embeds_pool.append(prompt_embeds[0].detach().cpu())
 
-        prompt_ids = pipeline.tokenizer(
-            prompts,
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-            max_length=pipeline.tokenizer.model_max_length,
-        ).input_ids.to(accelerator.device)
-        prompt_embeds = pipeline.text_encoder(prompt_ids)[0].to(inference_dtype)
+    prompt_embeds_combine = pipeline._encode_prompt(
+        None,
+        accelerator.device,
+        1,
+        config.sample.cfg,
+        None,
+        prompt_embeds=prompt_embeds,
+        negative_prompt_embeds=neg_prompt_embed,
+    ).to(inference_dtype)
 
-        for idx in range(len(prompts)):
-            prompt_pool.append(prompts[idx])
-            prompt_embeds_pool.append(prompt_embeds[idx].detach().cpu())
-            batch_idx = global_prompt_idx
-            global_prompt_idx += 1
+    root_latent = pipeline.prepare_latents(
+        1,
+        pipeline.unet.config.in_channels,
+        pipeline.unet.config.sample_size * pipeline.vae_scale_factor,
+        pipeline.unet.config.sample_size * pipeline.vae_scale_factor,
+        inference_dtype,
+        accelerator.device,
+        None,
+    )
+    batch_idx = 0
+    root_id = f"p{batch_idx}_root"
+    root_node = TreeNode(
+        node_id=root_id,
+        parent_id=None,
+        child_ids=[],
+        step=None,
+        depth=0,
+        batch_idx=batch_idx,
+        log_prob=None,
+    )
+    node_data[root_id] = root_node.to_dict()
+    latent_data[root_id] = root_latent.detach().cpu()
+    log_prob_data[root_id] = None
+    root_ids.append(root_id)
 
-            prompt_embeds_combine = pipeline._encode_prompt(
-                None,
-                accelerator.device,
-                1,
-                config.sample.cfg,
-                None,
-                prompt_embeds=prompt_embeds[idx : idx + 1],
-                negative_prompt_embeds=neg_prompt_embed,
-            ).to(inference_dtype)
+    nodes_current = [root_node]
 
-            root_latent = pipeline.prepare_latents(
-                1,
-                pipeline.unet.config.in_channels,
-                pipeline.unet.config.sample_size * pipeline.vae_scale_factor,
-                pipeline.unet.config.sample_size * pipeline.vae_scale_factor,
-                inference_dtype,
-                accelerator.device,
-                None,
-            )
-            root_id = f"p{batch_idx}_root"
-            root_node = TreeNode(
-                node_id=root_id,
-                parent_id=None,
-                child_ids=[],
-                step=None,
-                depth=0,
-                batch_idx=batch_idx,
-                log_prob=None,
-            )
-            node_data[root_id] = root_node.to_dict()
-            latent_data[root_id] = root_latent.detach().cpu()
-            log_prob_data[root_id] = None
-            root_ids.append(root_id)
+    for step_idx, t in enumerate(timesteps):
+        should_split = step_idx in split_points
+        nodes_next = []
 
-            nodes_current = [root_node]
+        for node in nodes_current:
+            latent = latent_data[node.node_id].to(accelerator.device, dtype=inference_dtype)
 
-            for step_idx, t in enumerate(timesteps):
-                should_split = step_idx in split_points
-                nodes_next = []
+            if config.sample.cfg:
+                embeds = prompt_embeds_combine
+                latents_input = torch.cat([latent] * 2)
+            else:
+                embeds = prompt_embeds_combine
+                latents_input = latent
 
-                for node in nodes_current:
-                    latent = latent_data[node.node_id].to(accelerator.device, dtype=inference_dtype)
+            latents_input = pipeline.scheduler.scale_model_input(latents_input, t)
+            latents_input = latents_input.to(inference_dtype)
 
-                    if config.sample.cfg:
-                        embeds = prompt_embeds_combine
-                        latents_input = torch.cat([latent] * 2)
-                    else:
-                        embeds = prompt_embeds_combine
-                        latents_input = latent
-
-                    latents_input = pipeline.scheduler.scale_model_input(latents_input, t)
-                    latents_input = latents_input.to(inference_dtype)
-
-                    with torch.no_grad():
-                        with autocast():
-                            noise_pred = pipeline.unet(
-                                latents_input,
-                                t,
-                                encoder_hidden_states=embeds,
-                                return_dict=False,
-                            )[0]
-
-                    if config.sample.cfg:
-                        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                        noise_pred = noise_pred_uncond + config.sample.guidance_scale * (
-                            noise_pred_text - noise_pred_uncond
-                        )
-
-                    eta = extra_step_kwargs.get("eta", config.sample.eta)
-                    prev_sample_mean, std_dev_t = _compute_prev_sample_mean_and_std(
-                        pipeline.scheduler,
-                        noise_pred,
+            with torch.no_grad():
+                with autocast():
+                    noise_pred = pipeline.unet(
+                        latents_input,
                         t,
-                        latent,
-                        eta=eta,
+                        encoder_hidden_states=embeds,
+                        return_dict=False,
+                    )[0]
+
+            if config.sample.cfg:
+                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                noise_pred = noise_pred_uncond + config.sample.guidance_scale * (
+                    noise_pred_text - noise_pred_uncond
+                )
+
+            eta = extra_step_kwargs.get("eta", config.sample.eta)
+            prev_sample_mean, std_dev_t = _compute_prev_sample_mean_and_std(
+                pipeline.scheduler,
+                noise_pred,
+                t,
+                latent,
+                eta=eta,
+            )
+
+            num_children = branch_factor if should_split else 1
+            corr_scale = split_noise_scale if should_split else 0.0
+            if should_split:
+                shared_noise = randn_tensor(
+                    prev_sample_mean.shape,
+                    generator=None,
+                    device=prev_sample_mean.device,
+                    dtype=prev_sample_mean.dtype,
+                )
+                corr_denom = (1.0 + corr_scale * corr_scale) ** 0.5
+
+            for split_idx in range(num_children):
+                if should_split:
+                    branch_noise = randn_tensor(
+                        prev_sample_mean.shape,
+                        generator=None,
+                        device=prev_sample_mean.device,
+                        dtype=prev_sample_mean.dtype,
                     )
-
-                    num_children = branch_factor if should_split else 1
-                    corr_scale = split_noise_scale if should_split else 0.0
-                    if should_split:
-                        shared_noise = randn_tensor(
-                            prev_sample_mean.shape,
-                            generator=None,
-                            device=prev_sample_mean.device,
-                            dtype=prev_sample_mean.dtype,
-                        )
-                        corr_denom = (1.0 + corr_scale * corr_scale) ** 0.5
-
-                    for split_idx in range(num_children):
-                        if should_split:
-                            branch_noise = randn_tensor(
-                                prev_sample_mean.shape,
-                                generator=None,
-                                device=prev_sample_mean.device,
-                                dtype=prev_sample_mean.dtype,
-                            )
-                            noise = (shared_noise + corr_scale * branch_noise) / corr_denom
-                        else:
-                            noise = randn_tensor(
-                                prev_sample_mean.shape,
-                                generator=None,
-                                device=prev_sample_mean.device,
-                                dtype=prev_sample_mean.dtype,
-                            )
-                        prev_sample = prev_sample_mean + std_dev_t * noise
-                        log_prob = _compute_log_prob(prev_sample, prev_sample_mean, std_dev_t)
-
-                        if should_split:
-                            child_id = f"{node.node_id}_s{step_idx}_{split_idx}"
-                        else:
-                            child_id = f"{node.node_id}_t{step_idx}"
-
-                        child_node = TreeNode(
-                            node_id=child_id,
-                            parent_id=node.node_id,
-                            child_ids=[],
-                            step=step_idx,
-                            depth=node.depth + 1,
-                            batch_idx=batch_idx,
-                            log_prob=log_prob.detach().cpu(),
-                        )
-                        node.child_ids.append(child_id)
-                        node_data[node.node_id]["child_ids"].append(child_id)
-                        node_data[child_id] = child_node.to_dict()
-                        latent_data[child_id] = prev_sample.detach().cpu()
-                        log_prob_data[child_id] = log_prob.detach().cpu()
-                        nodes_next.append(child_node)
-
-                nodes_current = nodes_next
-
-            for leaf in nodes_current:
-                leaf_ids.append(leaf.node_id)
-                prompts_for_images.append(prompt_pool[leaf.batch_idx])
-                with torch.no_grad():
-                    image = latents_decode(
-                        pipeline,
-                        latent_data[leaf.node_id].to(accelerator.device),
-                        accelerator.device,
-                        prompt_embeds.dtype,
+                    noise = (shared_noise + corr_scale * branch_noise) / corr_denom
+                else:
+                    noise = randn_tensor(
+                        prev_sample_mean.shape,
+                        generator=None,
+                        device=prev_sample_mean.device,
+                        dtype=prev_sample_mean.dtype,
                     )
-                image_tensors.append(image.squeeze(0).detach().cpu())
+                prev_sample = prev_sample_mean + std_dev_t * noise
+                log_prob = _compute_log_prob(prev_sample, prev_sample_mean, std_dev_t)
+
+                if should_split:
+                    child_id = f"{node.node_id}_s{step_idx}_{split_idx}"
+                else:
+                    child_id = f"{node.node_id}_t{step_idx}"
+
+                child_node = TreeNode(
+                    node_id=child_id,
+                    parent_id=node.node_id,
+                    child_ids=[],
+                    step=step_idx,
+                    depth=node.depth + 1,
+                    batch_idx=batch_idx,
+                    log_prob=log_prob.detach().cpu(),
+                )
+                node.child_ids.append(child_id)
+                node_data[node.node_id]["child_ids"].append(child_id)
+                node_data[child_id] = child_node.to_dict()
+                latent_data[child_id] = prev_sample.detach().cpu()
+                log_prob_data[child_id] = log_prob.detach().cpu()
+                nodes_next.append(child_node)
+
+        nodes_current = nodes_next
+
+    for leaf in nodes_current:
+        leaf_ids.append(leaf.node_id)
+        prompts_for_images.append(single_prompt)
+        with torch.no_grad():
+            image = latents_decode(
+                pipeline,
+                latent_data[leaf.node_id].to(accelerator.device),
+                accelerator.device,
+                prompt_embeds.dtype,
+            )
+        image_tensors.append(image.squeeze(0).detach().cpu())
 
     if accelerator.is_local_main_process:
         tree_data = {
@@ -444,7 +423,7 @@ def run_branch_grpo_sampling(
 
     if wandb_run:
         wandb_run.log({
-            f"branch_grpo_sampling/stage_{stage_idx}/num_prompts": len(prompt_pool),
+            f"branch_grpo_sampling/stage_{stage_idx}/num_prompts": 1,
             f"branch_grpo_sampling/stage_{stage_idx}/num_leaves": len(leaf_ids),
         })
 

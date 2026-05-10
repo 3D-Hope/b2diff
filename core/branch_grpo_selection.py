@@ -70,18 +70,16 @@ def run_branch_grpo_selection(config, stage_idx=None, logger=None, wandb_run=Non
     node_rewards = {}
 
     depth_to_nodes = defaultdict(list)
-    prompt_depth_to_nodes = defaultdict(lambda: defaultdict(list))
     max_depth = 0
     for node_id, node in nodes.items():
         depth = int(node["depth"])
         depth_to_nodes[depth].append(node_id)
-        prompt_depth_to_nodes[node["batch_idx"]][depth].append(node_id)
         max_depth = max(max_depth, depth)
 
+    # reward fusion
     for leaf_id in leaf_ids:
         node_rewards[leaf_id] = leaf_rewards[leaf_id]
 
-    # reward fusion
     for depth in range(max_depth - 1, -1, -1):
         for node_id in depth_to_nodes.get(depth, []):
             child_ids = nodes[node_id]["child_ids"]
@@ -105,55 +103,17 @@ def run_branch_grpo_selection(config, stage_idx=None, logger=None, wandb_run=Non
 
     # depthwise normalization per prompt
     node_advantages = {}
-    depth_reward_stats = {}
-    depth_adv_stats = {}
 
-    depth_reward_means = defaultdict(list)
-    depth_reward_stds = defaultdict(list)
-    depth_counts = defaultdict(int)
-    depth_adv_values = defaultdict(list)
 
-    for batch_idx, depth_nodes in prompt_depth_to_nodes.items():
-        for depth, node_ids in depth_nodes.items():
-            values = [node_rewards[nid].to(torch.float32) for nid in node_ids]
-            values_tensor, mean_val, std_val, adv = _compute_depth_stats(values)
-            depth_reward_means[depth].append(mean_val.item())
-            depth_reward_stds[depth].append(std_val.item())
-            depth_counts[depth] += int(values_tensor.numel())
-            depth_adv_values[depth].append(adv)
-            for idx, node_id in enumerate(node_ids):
-                node_advantages[node_id] = adv[idx]
+    for depth, node_ids in depth_to_nodes.items():
+        values = [node_rewards[nid].to(torch.float32) for nid in node_ids]
+        values_tensor, mean_val, std_val, adv = _compute_depth_stats(values)
+        for idx, node_id in enumerate(node_ids):
+            node_advantages[node_id] = adv[idx]
 
-    # logging
-    for depth in depth_to_nodes.keys():
-        means = depth_reward_means.get(depth, [])
-        stds = depth_reward_stds.get(depth, [])
-        depth_reward_stats[depth] = {
-            "mean": float(torch.tensor(means).mean()) if len(means) > 0 else 0.0,
-            "std": float(torch.tensor(stds).mean()) if len(stds) > 0 else 0.0,
-            "count": depth_counts.get(depth, 0),
-        }
-        adv_chunks = depth_adv_values.get(depth, [])
-        if len(adv_chunks) > 0:
-            depth_adv_stats[depth] = torch.cat(adv_chunks, dim=0)
-        else:
-            depth_adv_stats[depth] = torch.tensor([])
 
-    if wandb_run and config.wandb.enabled:
-        log_dict = {}
-        if config.branch_grpo.log_depth_stats:
-            for depth, stats in depth_reward_stats.items():
-                log_dict[f"branch_grpo/reward_depth/{depth}/mean"] = stats["mean"]
-                log_dict[f"branch_grpo/reward_depth/{depth}/std"] = stats["std"]
-                log_dict[f"branch_grpo/reward_depth/{depth}/count"] = stats["count"]
-        if config.branch_grpo.log_adv_histograms:
-            for depth, adv in depth_adv_stats.items():
-                if adv.numel() > 0:
-                    log_dict[f"branch_grpo/adv_depth/{depth}/hist"] = wandb.Histogram(adv.cpu().numpy())
-        if log_dict:
-            wandb_run.log(log_dict)
 
-    # create flat data structure for training
+    # create flat data structure for training with depth prunning
     parent_latents = []
     child_latents = []
     timesteps = []
@@ -162,19 +122,48 @@ def run_branch_grpo_selection(config, stage_idx=None, logger=None, wandb_run=Non
     batch_indices = []
     child_depths = []
     step_indices = []
+    if config.branch_grpo.depth_pruning:
+        def _parse_stop_depth(config):
+            stop_depth = config.branch_grpo.pruning_stop_depth
+            return int(stop_depth)
+
+
+        def _parse_base_depths(config):
+            base_depths = getattr(config.branch_grpo, "depth_pruning_depths", None)
+            if base_depths is None:
+                raise ValueError("branch_grpo.depth_pruning_depths must be set for depth pruning")
+            if isinstance(base_depths, str):
+                base_depths = [int(d.strip()) for d in base_depths.split(",") if d.strip()]
+            return sorted([int(d) for d in base_depths])
+
+        def _active_pruning_depths(config, stage_idx):
+            base_depths = _parse_base_depths(config)
+            interval = max(1, int(config.branch_grpo.pruning_slide_interval_stages))
+            shift_now = max(0, int(stage_idx // interval))
+
+            stop_depth = _parse_stop_depth(config)
+            max_shift = max(0, min(base_depths) - stop_depth)
+            shift_now = min(shift_now, max_shift)
+
+            return [d - shift_now for d in base_depths]
+
+        depths_to_prune = _active_pruning_depths(config, stage_idx)
+    else:
+        depths_to_prune = []
+
 
     for node_id, node in nodes.items():
         parent_id = node.get("parent_id")
-        if parent_id is None:
+        if parent_id is None or node["depth"] in depths_to_prune:
             continue
         parent_latents.append(tree_data["latents"][parent_id])
         child_latents.append(tree_data["latents"][node_id])
         timesteps.append(tree_data["timesteps"][node["step"]])
         old_log_probs.append(node.get("log_prob"))
         advantages.append(node_advantages[node_id])
-        batch_indices.append(node["batch_idx"])
-        child_depths.append(node["depth"])
-        step_indices.append(node["step"])
+        # batch_indices.append(node["batch_idx"])
+        # child_depths.append(node["depth"])
+        # step_indices.append(node["step"])
 
     parent_latents_tensor = torch.stack(parent_latents, dim=0)
     child_latents_tensor = torch.stack(child_latents, dim=0)
@@ -184,48 +173,24 @@ def run_branch_grpo_selection(config, stage_idx=None, logger=None, wandb_run=Non
         child_latents_tensor = child_latents_tensor.squeeze(1)
 
     edge_data = {
-        "parent_latents": parent_latents_tensor,
-        "child_latents": child_latents_tensor,
+        "latents": parent_latents_tensor,
+        "next_latents": child_latents_tensor,
         "timesteps": torch.stack(timesteps, dim=0),
-        "old_log_probs": torch.stack(old_log_probs, dim=0),
+        "log_probs": torch.stack(old_log_probs, dim=0),
         "advantages": torch.stack(advantages, dim=0),
-        "batch_idx": torch.tensor(batch_indices, dtype=torch.long),
-        "child_depth": torch.tensor(child_depths, dtype=torch.long),
-        "step_idx": torch.tensor(step_indices, dtype=torch.long),
         "prompt_embeds": tree_data["prompt_embeds"],
+        # "batch_idx": torch.tensor(batch_indices, dtype=torch.long),
+        # "child_depth": torch.tensor(child_depths, dtype=torch.long),
+        # "step_idx": torch.tensor(step_indices, dtype=torch.long),
     }
     _save_edges(save_dir, edge_data)
 
     num_generated = len(leaf_ids)
     mean_reward = float(raw_scores.mean()) if num_generated > 0 else 0.0
-    std_reward = float(raw_scores.std()) if num_generated > 0 else 0.0
-    num_positive = int((raw_scores >= config.eval.pos_threshold).sum()) if num_generated > 0 else 0
-    num_negative = int((raw_scores < config.eval.neg_threshold).sum()) if num_generated > 0 else 0
 
-    cumulative_queries_path = os.path.join(config.save_path, unique_id, "cumulative_reward_queries.pkl")
-    if os.path.exists(cumulative_queries_path):
-        with open(cumulative_queries_path, "rb") as f:
-            cumulative_reward_queries = pickle.load(f)
-    else:
-        cumulative_reward_queries = 0
-    cumulative_reward_queries += num_generated
-    with open(cumulative_queries_path, "wb") as f:
-        pickle.dump(cumulative_reward_queries, f)
-
-    selection_metrics = {
-        "num_selected": num_generated,
-        "num_positive": num_positive,
-        "num_negative": num_negative,
-        "num_generated": num_generated,
-        "num_rejected": 0,
-        "mean_reward": mean_reward,
-        "std_reward": std_reward,
-        "num_queries": num_generated,
-        "cumulative_queries": cumulative_reward_queries,
-    }
 
     if logger:
         logger.info(f"BranchGRPO selection completed for stage {stage_idx}")
-        logger.info(f"Generated: {num_generated}, Mean reward: {mean_reward:.4f} ± {std_reward:.4f}")
+        logger.info(f"Generated: {num_generated}, Mean reward: {mean_reward:.4f} ")
 
-    return save_dir, selection_metrics
+    return save_dir, mean_reward
