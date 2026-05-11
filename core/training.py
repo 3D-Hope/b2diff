@@ -171,6 +171,8 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         assert grpo_total_samples >= config.train.batch_size, (
             f"GRPO total samples ({grpo_total_samples}) must be >= train.batch_size ({config.train.batch_size})"
         )
+    elif config.pipeline.use_hacked_branch_grpo:
+        pass
     elif not config.sample.fk:
         assert config.sample.batch_size >= config.train.batch_size
         assert config.sample.batch_size % config.train.batch_size == 0
