@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=uniform_10
 #SBATCH --partition=batch
-#SBATCH --constraint=zone-msp3
+#SBATCH --qos=neurips-2026
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=12G
