@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=template1_iadd_grpo
+#SBATCH --job-name=template3_iadd_grpo
 #SBATCH --partition=batch
 #SBATCH --gpus=h200:1
 #SBATCH --cpus-per-task=4
@@ -162,7 +162,7 @@ echo "GPUs detected: ${NUM_GPUS}"
     # pipeline.continue_from_stage=110 \
     # resume_id="tg2dp40a" \
 
-run_name="template1_iadd_grpo"
+run_name="template3_iadd_grpo"
 # sample.batch_size=2, means 2 prompts are sampled, each has 4 particles for best and 4 for worse reward if boest_only_fk is false else only 4 particles for best reward only no worst
 # batch size for sampling 12 for only best and 6 for both best and worst
 python3 ./scripts/training/train_pipeline.py \
@@ -176,7 +176,7 @@ python3 ./scripts/training/train_pipeline.py \
     train.incremental_training=true \
     sample.no_branching=false \
     sample.no_selection=true \
-    prompt_file=configs/prompt/template1_train.json \
+    prompt_file=configs/prompt/template3_train.json \
     pipeline.use_iadd_grpo=true \
     sample.fk=true \
     sample.num_particles=16 \
