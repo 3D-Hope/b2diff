@@ -57,8 +57,10 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
     # Determine effective number of training timesteps for gradient accumulation
     if getattr(config.train, 'incremental_training', False) and training_timesteps is not None:
         num_train_timesteps_2 = int(len(training_timesteps))
+    elif config.pipeline.use_hacked_branch_grpo:
+        num_train_timesteps_2 = config.sample.num_steps 
     else:
-        num_train_timesteps_2 = int(config.split_step * config.train.timestep_fraction)
+        num_train_timesteps_2 = int(config.split_step * config.train.timestep_fraction) 
     
     # Setup accelerator (per-stage, with correct gradient_accumulation_steps)
     accelerator_config = ProjectConfiguration(

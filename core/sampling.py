@@ -291,9 +291,9 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
             # sample
             with autocast():
                 with torch.no_grad():
-                    if (not config.sample.no_branching and ((config.sample.num_steps-i) in split_steps)) or (config.pipeline.use_grpo and t == ts[0]):
+                    if (config.pipeline.use_hacked_branch_grpo and i in split_steps[0]) or (not config.sample.no_branching and ((config.sample.num_steps-i) in split_steps)) or (config.pipeline.use_grpo and t == ts[0]):
                         # if config.pipeline.use_grpo: print(f"using grpo, splitting at {t}")
-                        if config.pipeline.use_grpo: branch_num = split_times[0]
+                        if config.pipeline.use_grpo or config.pipeline.use_hacked_branch_grpo: branch_num = split_times[0]
                         else:
                             branch_num = split_steps.index(config.sample.num_steps-i)
                             branch_num = split_times[branch_num]

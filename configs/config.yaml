@@ -23,6 +23,7 @@ pipeline:
   use_grpo: false
   use_iadd_grpo: false
   use_branch_grpo: false
+  use_hacked_branch_grpo: false
 
 branch_grpo:
   split_points: [0, 4, 8, 12]

@@ -225,7 +225,8 @@ class TrainingPipeline:
         stage_config = OmegaConf.create(OmegaConf.to_container(self.config, resolve=True))
         
         # Update stage-specific values
-        stage_config.split_step = self.calculate_split_step(stage_idx)
+        if not self.config.pipeline.use_hacked_branch_grpo:
+            stage_config.split_step = self.calculate_split_step(stage_idx)
         stage_config.seed = self.config.seed + stage_idx
         
         return stage_config
