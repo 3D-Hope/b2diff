@@ -190,8 +190,6 @@ python3 ./scripts/training/train_pipeline.py \
     sample.brach_at_before_fk=5 \
     train.incremental_timesteps=[5,10,15,20] \
     train.num_stages_per_increment=10 \
-    resume_id="e9hotfty" \
-    pipeline.continue_from_stage=48
 
 # ------------------------------------------------------------------------------
 # Timing summary

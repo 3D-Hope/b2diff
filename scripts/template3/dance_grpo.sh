@@ -180,8 +180,6 @@ python3 ./scripts/training/train_pipeline.py \
     sample.no_selection=true \
     prompt_file=configs/prompt/template1_train.json \
     pipeline.use_grpo=true \
-    resume_id="twjjwsqj" \
-    pipeline.continue_from_stage=70
 
 
 # ------------------------------------------------------------------------------
