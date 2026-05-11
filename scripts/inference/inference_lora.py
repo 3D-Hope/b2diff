@@ -18,7 +18,9 @@ from diffusers.models.attention_processor import LoRAAttnProcessor
 
 # Add project root to path
 script_path = os.path.abspath(__file__)
-sys.path.append(os.path.dirname(script_path))
+# Go up 3 levels: scripts/inference/inference_lora.py -> project root
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(script_path)))
+sys.path.insert(0, project_root)
 from diffusion.ddim_with_logprob import ddim_step_with_logprob, latents_decode
 from utils.utils import seed_everything
 
@@ -27,7 +29,7 @@ from utils.utils import seed_everything
 # ============================================================================
 CONFIG = {
     # Paths
-    "checkpoint_path": "outputs/83_pytorch_lora_weights.safetensors",
+    "checkpoint_path": "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/branch_template1_branch_grpo/stage45/checkpoints/checkpoint_0/pytorch_lora_weights.safetensors",
     "prompt_file": "config/prompt/template1_train.json",
     "output_dir": "outputs/inference_results_83_ckpt",
     "base_model": "CompVis/stable-diffusion-v1-4",
@@ -38,7 +40,7 @@ CONFIG = {
     "guidance_scale": 5.0,
     "eta": 1.0,
     "seed": 300,
-    "num_samples_per_prompt": 1112,  # Generate N images per prompt (45 prompts * 1112 = 50,040 total)
+    "num_samples_per_prompt": 1,  # Generate N images per prompt (45 prompts * 1112 = 50,040 total)
     
     # Checkpointing
     "checkpoint_every": 100,  # Save progress every N images
