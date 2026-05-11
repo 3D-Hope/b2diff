@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=infer_every5_hacked_branch_grpo_template1
+#SBATCH --job-name=infer_every2_hacked_branch_grpo_template1
 #SBATCH --partition=batch
 #SBATCH --constraint=zone-msp3
 #SBATCH --gpus=h200:1
@@ -41,7 +41,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 run_name="hacked_branch_grpo_template1"
 model_root="model/lora/${run_name}"
 output_root="outputs/${run_name}"
-stage_stride="${STAGE_STRIDE:-5}"
+stage_stride="${STAGE_STRIDE:-2}"
 num_images="${NUM_IMAGES:-1080}"
 batch_size="${BATCH_SIZE:-32}"
 
