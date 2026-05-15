@@ -25,17 +25,28 @@ from utils.utils import seed_everything
 # ============================================================================
 # EXPERIMENT_NAME = "uniform_all_20"  # Name for this experiment
 # EXPERIMENT_NAME = "last_10" 
-EXPERIMENT_NAME = "uniform_10" 
+EXPERIMENT_NAME = os.environ.get("EXPERIMENT_NAME", "uniform_10")
+
+
+def env_or_default(name, default):
+    value = os.environ.get(name)
+    return value if value else default
 
 CONFIG = {
     # Paths
-    "pretrained_latents_path": "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/baseline_sd14_samples_10steps/pretrained_latents.pt",
+    "pretrained_latents_path": env_or_default(
+        "PRETRAINED_LATENTS_PATH",
+        "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/baseline_sd14_samples_10steps/pretrained_latents.pt",
+    ),
     # "lora_checkpoint_path": "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/lora_ckpt/model/lora/vanilla_ddpo/stage0/checkpoints/checkpoint_1",
     # "lora_checkpoint_path": "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/last_10/stage1/checkpoints/checkpoint_1",
-    "lora_checkpoint_path": "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/uniform_10/stage1/checkpoints/checkpoint_1",
+    "lora_checkpoint_path": env_or_default(
+        "LORA_CHECKPOINT_PATH",
+        "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/b2diff/outputs/uniform_10/stage1/checkpoints/checkpoint_1",
+    ),
     
     "base_model": "CompVis/stable-diffusion-v1-4",
-    "output_dir": f"outputs/lora_inference_{EXPERIMENT_NAME}",
+    "output_dir": env_or_default("OUTPUT_DIR", f"outputs/lora_inference_{EXPERIMENT_NAME}"),
     
     # Generation settings (must match pretrained)
     "num_inference_steps": 20,
@@ -52,6 +63,8 @@ CONFIG = {
 print("=" * 80)
 print(f"INFERENCE WITH LORA: {EXPERIMENT_NAME}")
 print("=" * 80)
+print(f"  LoRA checkpoint: {CONFIG['lora_checkpoint_path']}")
+print(f"  Output dir:      {CONFIG['output_dir']}")
 
 device = CONFIG["device"]
 print(f"\nUsing device: {device}")

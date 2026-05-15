@@ -20,4 +20,4 @@ csvs
 docs
 figures
 rebuttal/
-*.pyc
+rebuttal_qualitative/

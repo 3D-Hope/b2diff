@@ -80,20 +80,36 @@
 
 
 
+# python3 ./scripts/training/train_pipeline.py \
+#     exp_name=test68 \
+#     seed=42 \
+#     sample.batch_size=1 \
+#     train.batch_size=1 \
+#     sample.num_batches_per_epoch=2 \
+#     train.learning_rate=3e-4 \
+#     train.max_grad_norm=0.005 \
+#     sample.no_branching=false \
+#     sample.no_selection=true \
+#     prompt_file=configs/prompt/template1_train.json \
+#     pipeline.use_branch_grpo=true \
+#     wandb.enabled=false \
+#     branch_grpo.split_points=[0,4] \
+#     branch_grpo.edge_microbatch_size=1 \
+#     branch_grpo.split_noise_scale=8
+
+
+#     # 
 python3 ./scripts/training/train_pipeline.py \
-    exp_name=test68 \
+    exp_name=test96 \
     seed=42 \
     sample.batch_size=1 \
     train.batch_size=1 \
+    split_time=2 \
+    split_step=[0,4,8,12] \
     sample.num_batches_per_epoch=2 \
     train.learning_rate=3e-4 \
     train.max_grad_norm=0.005 \
-    train.incremental_training=true \
     sample.no_branching=false \
     sample.no_selection=true \
     prompt_file=configs/prompt/template1_train.json \
-    pipeline.use_branch_grpo=true \
-    wandb.enabled=false \
-    branch_grpo.split_points=[0,4] \
-    branch_grpo.edge_microbatch_size=1
-
+    pipeline.use_hacked_branch_grpo=true
