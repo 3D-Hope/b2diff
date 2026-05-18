@@ -366,8 +366,40 @@ def run_training(config, stage_idx=None, external_logger=None, wandb_run=None, p
         GradRecord.append([])
         
         total_batch_size = init_samples["eval_scores"].shape[0]
-        perm = torch.randperm(total_batch_size)
-        samples = {k: v[perm] for k, v in init_samples.items()}
+        _grpo_cfg = getattr(config, "grpo", None)
+        _grpo_enabled = bool(getattr(_grpo_cfg, "enabled", False)) if _grpo_cfg is not None else False
+
+        if _grpo_enabled:
+            # GRPO: do NOT shuffle the batch dimension, so each group's
+            # `group_size` rollouts (which are contiguous as written by
+            # run_sampling) stay together and flow through the same
+            # optimizer step. Otherwise the per-group advantage baseline
+            # we computed in selection becomes mismatched at update time.
+            group_size = int(_grpo_cfg.group_size)
+            train_bs = int(config.train.batch_size)
+            ga_steps = int(config.train.gradient_accumulation_steps)
+            effective_bs = train_bs * ga_steps
+            # Either train_bs is a multiple of group_size (group fits in one
+            # minibatch), or the effective batch (after grad accum) covers
+            # whole groups (group fits across an accumulation cycle).
+            ok = (train_bs % group_size == 0) or (effective_bs % group_size == 0)
+            if not ok:
+                raise ValueError(
+                    f"[GRPO] train.batch_size ({train_bs}) must be a multiple "
+                    f"of grpo.group_size ({group_size}), or train.batch_size * "
+                    f"gradient_accumulation_steps ({effective_bs}) must be a "
+                    f"multiple of group_size. Got neither."
+                )
+            if external_logger and accelerator.is_local_main_process and epoch == 0:
+                external_logger.info(
+                    f"[GRPO] training preserving sample order (no batch shuffle). "
+                    f"group_size={group_size}, train_bs={train_bs}, ga={ga_steps}."
+                )
+            samples = {k: v.clone() if torch.is_tensor(v) else v
+                       for k, v in init_samples.items()}
+        else:
+            perm = torch.randperm(total_batch_size)
+            samples = {k: v[perm] for k, v in init_samples.items()}
         
         
         

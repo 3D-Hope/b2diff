@@ -507,23 +507,98 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
                 boxes_list.append(box)
             return boxes_list
 
+        # ---------------- GRPO mode validation ----------------
+        grpo_cfg = getattr(config, "grpo", None)
+        grpo_enabled = bool(getattr(grpo_cfg, "enabled", False)) if grpo_cfg is not None else False
+        if grpo_enabled:
+            grpo_num_floors = int(grpo_cfg.num_floors_per_batch)
+            grpo_group_size = int(grpo_cfg.group_size)
+            grpo_shared_noise = bool(getattr(grpo_cfg, "shared_noise_per_floor", True))
+            assert grpo_num_floors * grpo_group_size == config.sample.batch_size, (
+                f"[GRPO] sample.batch_size ({config.sample.batch_size}) must equal "
+                f"grpo.num_floors_per_batch ({grpo_num_floors}) * grpo.group_size "
+                f"({grpo_group_size})."
+            )
+            assert float(getattr(config.sample, "eta", 0.0)) > 0.0, (
+                "[GRPO] sample.eta must be > 0 so the SDE step injects noise; "
+                "with eta=0 (DDIM-deterministic) all samples in a group are identical."
+            )
+            assert not bool(getattr(config.sample, "fk", False)), (
+                "[GRPO] sample.fk must be false; GRPO is an alternative to FK steering."
+            )
+            if logger:
+                logger.info(
+                    f"[GRPO] sampling with num_floors_per_batch={grpo_num_floors}, "
+                    f"group_size={grpo_group_size}, shared_noise={grpo_shared_noise}, "
+                    f"eta={float(config.sample.eta)}"
+                )
+            # Group-id bookkeeping for selection / training.
+            total_group_ids = []  # list[int]
+            if os.path.exists(os.path.join(save_dir, "group_ids.json")):
+                with open(os.path.join(save_dir, "group_ids.json"), "r") as _f:
+                    total_group_ids = json.load(_f)
+            _next_group_id = (max(total_group_ids) + 1) if total_group_ids else 0
+        else:
+            grpo_num_floors = grpo_group_size = 0
+            grpo_shared_noise = False
+            total_group_ids = []
+            _next_group_id = 0
+
         for idx in tqdm(
             range(config.sample.num_batches_per_epoch),
             disable=not accelerator.is_local_main_process,
             position=0,
             desc="Sampling batches",
         ):
-            # Randomly sample floor conditions for each item in the batch
-            batch_indices = [random.randrange(floor_cnt) for _ in range(config.sample.batch_size)]
-            fpbpn_batch   = torch.tensor(
-                floor_cond_np[batch_indices], dtype=torch.float32, device=accelerator.device
-            )  # (B, 256, 4)
+            # ----------- Floor selection and initial noise -----------
+            if grpo_enabled:
+                # Pick `num_floors_per_batch` distinct floors (with replacement
+                # is fine; rare collision just means the same floor appears
+                # twice as separate groups).
+                floor_choices = [random.randrange(floor_cnt) for _ in range(grpo_num_floors)]
+                # Each floor appears `group_size` times consecutively.
+                batch_indices = [
+                    f for f in floor_choices for _ in range(grpo_group_size)
+                ]
+                fpbpn_batch = torch.tensor(
+                    floor_cond_np[batch_indices], dtype=torch.float32,
+                    device=accelerator.device,
+                )  # (B, 256, 4)
 
-            # Initial pure noise  (B, N, C)
-            x_noise = torch.randn(
-                config.sample.batch_size, num_objects, scene_dim,
-                dtype=torch.float32, device=accelerator.device,
-            )
+                if grpo_shared_noise:
+                    # One x_T per floor, broadcast across the group.
+                    per_floor_noise = torch.randn(
+                        grpo_num_floors, num_objects, scene_dim,
+                        dtype=torch.float32, device=accelerator.device,
+                    )  # (F, N, C)
+                    x_noise = per_floor_noise.repeat_interleave(grpo_group_size, dim=0)
+                    # (F*group_size, N, C)
+                else:
+                    x_noise = torch.randn(
+                        config.sample.batch_size, num_objects, scene_dim,
+                        dtype=torch.float32, device=accelerator.device,
+                    )
+
+                # Assign a unique group id to each (batch, floor) pair so the
+                # downstream advantage normaliser knows which rollouts share a
+                # floor. Indices: group_size members of group g are contiguous.
+                group_ids_this_batch = [
+                    _next_group_id + g for g in range(grpo_num_floors)
+                    for _ in range(grpo_group_size)
+                ]
+                _next_group_id += grpo_num_floors
+                total_group_ids.extend(group_ids_this_batch)
+            else:
+                # Legacy random-per-sample floor pick.
+                batch_indices = [random.randrange(floor_cnt) for _ in range(config.sample.batch_size)]
+                fpbpn_batch   = torch.tensor(
+                    floor_cond_np[batch_indices], dtype=torch.float32, device=accelerator.device
+                )  # (B, 256, 4)
+
+                x_noise = torch.randn(
+                    config.sample.batch_size, num_objects, scene_dim,
+                    dtype=torch.float32, device=accelerator.device,
+                )
 
             ddim_3d.set_timesteps(config.sample.num_steps, device=accelerator.device)
             ts = ddim_3d.timesteps
@@ -632,6 +707,9 @@ def run_sampling(config, stage_idx=None, logger=None, wandb_run=None, pipeline=N
 
                 with open(os.path.join(save_dir, 'fpbpn_list.json'), 'w') as _f:
                     json.dump(total_fpbpn, _f)
+                if grpo_enabled:
+                    with open(os.path.join(save_dir, 'group_ids.json'), 'w') as _f:
+                        json.dump(total_group_ids, _f)
                 with open(os.path.join(save_dir, 'sample.pkl'), 'wb') as _f:
                     if total_samples is None:
                         pickle.dump(new_tensors, _f)

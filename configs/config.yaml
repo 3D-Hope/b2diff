@@ -129,8 +129,8 @@ sample:
   batch_size: 16
   num_batches_per_epoch: 16
   save_interval: 2
-  no_branching: false
-  no_selection: false
+  no_branching: true
+  no_selection: true
   normalize_all: false # if true uses the stat of the whole batch for norm instead of the per prompt reward norm
   fk: false
   num_particles: 4
@@ -178,6 +178,22 @@ train:
   bpt: "default" # "custom" / anything else for default b2 paper's
   only_last_n_steps: -1 # if > 0, only train the last n steps
 
+
+# GRPO (Group Relative Policy Optimization) configuration.
+# When enabled, sampling generates `group_size` rollouts per floor (sharing the
+# same initial x_T), the reward is normalised per group (z-score using only
+# the current rollouts of the same floor), and the training loader keeps
+# groups contiguous so each group flows through one optimizer step together.
+# This is an alternative to FK steering / history-based DDPO normalisation;
+# leave `enabled: false` to keep the existing behaviour.
+grpo:
+  enabled: true
+  num_floors_per_batch: 16       # distinct floors per sampling batch
+  group_size: 16                 # rollouts per floor (sample.batch_size = num_floors_per_batch * group_size)
+  shared_noise_per_floor: true   # all rollouts in a group start from the same x_T
+  advantage_eps: 1.0e-4          # std floor for group z-score
+  # When enabled, the runtime forces: sample.fk=false, sample.no_selection=true,
+  # sample.eta>0, and asserts sample.batch_size == num_floors_per_batch * group_size.
 
 # Evaluation & Selection configuration
 eval:
