@@ -62,9 +62,9 @@ midiffusion:
   floor_polygons_path: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/floor_polygons_test.json"
   floor_geometry_path: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/floor_geometry_test.json"
   config_path: "3d_layout_generation/MiDiffusion/config.yaml"
-  checkpoint_path: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/output/log/pretrained_3d_layout_custom_attn/model_06000"
+  checkpoint_path: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/output/log/pretrained_3d_layout_custom_attn/best_model.pt"
   dataset_directory: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/steerable-scene-generation/MiData/bedroom"
-  annotation_file: "bedroom_threed_front_splits.csv"
+  annotation_file: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/ThreedFront/dataset_files/bedroom_threed_front_splits_original.csv"
   
   # Dataset settings
   dataset_type: "cached_threedfront"
@@ -172,7 +172,7 @@ train:
   incremental_training: false # incremental training but the random timesteps in each loop
   only_train_steps: -1 # if paired with incremental_training, any n timesteps training
   uniformly_sample_timesteps: false # if true, sample the timesteps uniformly instead of choosing randomly
-  incremental_timesteps: [5,10,15,20]
+  incremental_timesteps: [5,10,15]
   num_stages_per_increment: 10
   score_fn_training: false # whether to train the score function or not
   bpt: "default" # "custom" / anything else for default b2 paper's
