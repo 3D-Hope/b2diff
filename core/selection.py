@@ -37,6 +37,50 @@ _FLOOR_GEOMETRY_CACHE = {}
 _CUSTOM_REWARD_FN_CACHE = {}
 
 
+def _grpo_normalize_advantages(R, group_ids, eps=1e-4):
+    """Per-group z-score normalisation used by GRPO.
+
+    Args:
+        R: (N,) tensor or 1D array of raw rewards (one per sample).
+        group_ids: length-N list/array of integer group ids — samples sharing
+            an id are normalised against each other (in our setting, samples
+            generated from the same floor in the same sampling batch).
+        eps: floor on the within-group std to keep advantages finite when all
+            group members got identical reward.
+
+    Returns:
+        advantages: (N,) tensor on the same device/dtype as R, with mean 0 and
+        unit variance within each group.
+
+    Notes
+    -----
+    This is the standard GRPO advantage (Shao et al., DeepSeek-Math); also the
+    "trajectory-level advantage" used by Flow-GRPO / DanceGRPO for diffusion
+    models. We do NOT mix in any history-based stats — the whole point of GRPO
+    is that the group itself provides the baseline, which is why we sample
+    multiple rollouts from the same floor in the first place.
+    """
+    if not torch.is_tensor(R):
+        R = torch.as_tensor(R, dtype=torch.float32)
+    R = R.to(torch.float32)
+
+    group_ids = np.asarray(group_ids, dtype=np.int64)
+    if group_ids.shape[0] != R.shape[0]:
+        raise ValueError(
+            f"group_ids length ({group_ids.shape[0]}) must match rewards "
+            f"length ({R.shape[0]})."
+        )
+
+    advantages = torch.zeros_like(R)
+    for g in np.unique(group_ids):
+        mask = torch.from_numpy(group_ids == g)
+        r_g = R[mask]
+        mean_g = r_g.mean()
+        std_g = r_g.std(unbiased=False)
+        advantages[mask] = (r_g - mean_g) / (std_g + float(eps))
+    return advantages
+
+
 def _normalize_custom_reward_names(custom_reward):
     """Normalize custom_reward config to a deduplicated list of reward names."""
     if custom_reward is None:
@@ -368,7 +412,7 @@ def _compute_threed_reward_components(parsed, config, room_type, indices=None, f
     return total_reward, components, reward_mode
 
 
-def threed_score_fn(x0_raw, save_dir, config, indices=None, floor_polygons=None, floor_geometry=None, only_raw_scores=True):
+def threed_score_fn(x0_raw, save_dir, config, indices=None, floor_polygons=None, floor_geometry=None, only_raw_scores=True, group_ids=None):
     """Non-penetration reward for a batch of denoised 3D scenes, with history-based
     global z-score normalisation mirroring score_fn1.
 
@@ -426,6 +470,53 @@ def threed_score_fn(x0_raw, save_dir, config, indices=None, floor_polygons=None,
     os.makedirs(os.path.join(save_dir, 'eval'), exist_ok=True)
     with open(os.path.join(save_dir, 'eval', scores_filename), 'wb') as f:
         pickle.dump(R, f)
+
+    # ---------------- GRPO branch ----------------
+    grpo_cfg = getattr(config, "grpo", None)
+    grpo_enabled = bool(getattr(grpo_cfg, "enabled", False)) if grpo_cfg is not None else False
+    if grpo_enabled:
+        if group_ids is None:
+            raise ValueError(
+                "[GRPO] threed_score_fn requires group_ids when config.grpo.enabled=true."
+            )
+        eps = float(getattr(grpo_cfg, "advantage_eps", 1e-4))
+        eval_scores = _grpo_normalize_advantages(R, group_ids, eps=eps)
+
+        metrics = {
+            'raw_scores_mean':        float(R.mean()),
+            'raw_scores_std':         float(R.std()),
+            'raw_scores_min':         float(R.min()),
+            'raw_scores_max':         float(R.max()),
+            'normalized_scores_mean': float(eval_scores.mean()),
+            'normalized_scores_std':  float(eval_scores.std()),
+            'grpo/num_groups':        int(len(np.unique(np.asarray(group_ids)))),
+            'grpo/group_size_mean':   float(len(group_ids) / max(1, len(np.unique(np.asarray(group_ids))))),
+        }
+        # Per-group within-group std — useful to monitor diversity collapse.
+        gids = np.asarray(group_ids, dtype=np.int64)
+        within_std = []
+        for g in np.unique(gids):
+            within_std.append(float(R[torch.from_numpy(gids == g)].std(unbiased=False)))
+        metrics['grpo/within_group_std_mean'] = float(np.mean(within_std)) if within_std else 0.0
+        metrics['grpo/within_group_std_min']  = float(np.min(within_std)) if within_std else 0.0
+        metrics['grpo/within_group_std_max']  = float(np.max(within_std)) if within_std else 0.0
+
+        metrics['component/total_raw_mean'] = float(R.mean())
+        if reward_mode == "universal":
+            universal_components = [
+                component_values
+                for component_name, component_values in reward_components.items()
+                if not component_name.startswith("custom_")
+            ]
+            if len(universal_components) > 0:
+                universal_total = sum(universal_components).detach().cpu()
+                metrics['component/universal_total_raw_mean'] = float(universal_total.mean())
+                metrics['component/universal_total_raw_std'] = float(universal_total.std())
+        for component_name, component_values in reward_components.items():
+            component_values = component_values.detach().cpu()
+            metrics[f'component/{component_name}_mean'] = float(component_values.mean())
+            metrics[f'component/{component_name}_std'] = float(component_values.std())
+        return eval_scores, metrics, R
 
     # History-based global z-score normalisation
     history_data = []
@@ -813,6 +904,23 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
                         )
                 floor_geometry.append(entry)
 
+        # Load GRPO group ids if present (written by run_sampling when enabled).
+        group_ids = None
+        grpo_cfg_local = getattr(config, "grpo", None)
+        if grpo_cfg_local is not None and bool(getattr(grpo_cfg_local, "enabled", False)):
+            group_ids_path = os.path.join(save_dir, 'group_ids.json')
+            if not os.path.exists(group_ids_path):
+                raise FileNotFoundError(
+                    f"[GRPO] expected {group_ids_path}; run_sampling must be run with "
+                    "config.grpo.enabled=true to write group ids."
+                )
+            with open(group_ids_path, 'r') as _f:
+                group_ids = json.load(_f)
+            if len(group_ids) != x0_raw.shape[0]:
+                raise ValueError(
+                    f"[GRPO] group_ids length ({len(group_ids)}) != samples ({x0_raw.shape[0]})."
+                )
+
         eval_scores, score_metrics, raw_scores = threed_score_fn(
             x0_raw,
             save_dir,
@@ -821,6 +929,7 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
             floor_polygons=floor_polygons,
             floor_geometry=floor_geometry,
             only_raw_scores=False,
+            group_ids=group_ids,
         )
         _embed_key    = 'fpbpn'
         _lat_key      = 'scenes'
@@ -893,6 +1002,14 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
         }
 
     data = get_new_unit()
+    # GRPO uses all rollouts (no pos/neg pair selection); force the no_selection
+    # passthrough so groups stay contiguous in their original sampling order.
+    _grpo_cfg = getattr(config, "grpo", None)
+    _grpo_enabled = bool(getattr(_grpo_cfg, "enabled", False)) if _grpo_cfg is not None else False
+    if _grpo_enabled and not config.sample.no_selection:
+        if logger:
+            logger.info("[GRPO] forcing sample.no_selection=True (GRPO trains on all rollouts).")
+        config.sample.no_selection = True
     if config.sample.no_selection:
         t_left  = 0
         t_right = config.sample.num_steps

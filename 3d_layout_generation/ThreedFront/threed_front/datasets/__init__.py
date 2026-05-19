@@ -22,7 +22,9 @@ def get_raw_dataset(config, filter_fn=lambda s: s, path_to_bounds=None,
     split=["train", "val"], include_edges=False, include_room_mask=True):
     dataset_type = config["dataset_type"]
     if "cached" in dataset_type:
+        # Make the train/test/validation splits
         splits_builder = CSVSplitsBuilder(config["annotation_file"])
+
         split_scene_ids = splits_builder.get_splits(split)
 
         dataset = CachedThreedFront(
