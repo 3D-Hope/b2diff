@@ -22,10 +22,7 @@ def get_raw_dataset(config, filter_fn=lambda s: s, path_to_bounds=None,
     split=["train", "val"], include_edges=False, include_room_mask=True):
     dataset_type = config["dataset_type"]
     if "cached" in dataset_type:
-        # Make the train/test/validation splits
-        # splits_builder = CSVSplitsBuilder(config["annotation_file"])
-        splits_builder = CSVSplitsBuilder("/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/ThreedFront/dataset_files/bedroom_threed_front_splits.csv") # TODO: RM THIS
-
+        splits_builder = CSVSplitsBuilder(config["annotation_file"])
         split_scene_ids = splits_builder.get_splits(split)
 
         dataset = CachedThreedFront(

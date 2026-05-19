@@ -271,7 +271,6 @@ class ThreedFutureModel(BaseThreedFutureModel):
         except:
             import pdb
             pdb.set_trace()
-            print("Loading model failed", flush=True)
             print(self.raw_model_path, flush=True)
             raise
 

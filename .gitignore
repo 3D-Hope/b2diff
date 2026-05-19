@@ -18,3 +18,7 @@ render_logs/
 *.csv
 api/
 test_random_floor/
+node_modules/
+3D-FUTURE-model/
+frontend/
+backend/
