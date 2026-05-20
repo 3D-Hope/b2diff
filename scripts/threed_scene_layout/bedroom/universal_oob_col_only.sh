@@ -1,4 +1,4 @@
-run_name="may_19_universal"
+run_name="may_19_universal_only_oob_col"
 python3 ./scripts/training/train_pipeline.py \
     exp_name=${run_name} \
     seed=42 \
@@ -15,4 +15,5 @@ python3 ./scripts/training/train_pipeline.py \
     sample.num_steps=20 \
     train.num_stages_per_increment=10 \
     universal_rewards=true \
+    universal_reward_components=[penetration,boundary] \
     midiffusion.checkpoint_path="/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/output/log/pretrained_3d_layout_custom_attn/best_model.pt"

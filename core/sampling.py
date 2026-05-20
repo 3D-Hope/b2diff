@@ -34,8 +34,8 @@ def _load_midiff_cfg(config_file):
     return config
 
 PROJ_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-PATH_TO_DATASET_FILES = os.path.join(PROJ_DIR, "../ThreedFront/dataset_files/")
-PATH_TO_PROCESSED_DATA = os.path.join(PROJ_DIR, "../ThreedFront/output/3d_front_processed/")
+PATH_TO_DATASET_FILES = os.path.join(PROJ_DIR, "3d_layout_generation/ThreedFront/dataset_files/")
+PATH_TO_PROCESSED_DATA = os.path.join(PROJ_DIR, "3d_layout_generation/ThreedFront/output/3d_front_processed/")
 
 def _update_data_paths(config_data):
     config_data["dataset_directory"] = \

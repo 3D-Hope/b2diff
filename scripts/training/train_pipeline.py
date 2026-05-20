@@ -154,21 +154,73 @@ class TrainingPipeline:
         if midiffusion_root not in sys.path:
             sys.path.insert(0, midiffusion_root)
 
-        from midiffusion.ashok_midiffusion import SceneDiffuserMiDiffusion
+        import yaml
+        try:
+            from yaml import CLoader as Loader
+        except ImportError:
+            from yaml import Loader
+
+        from midiffusion.ashok_midiffusion import build_scene_diffuser
+        from midiffusion.datasets.threed_front_encoding import get_encoded_dataset
 
         logger.info("Loading SceneDiffuserMiDiffusion (ONCE for all stages)...")
         device = torch.device(f"cuda:{self.config.dev_id}")
         torch.cuda.set_device(self.config.dev_id)
 
         # ------------------------------------------------------------------
-        # 1. Build model
+        # 1. Build model (requires class_dim from dataset)
         # ------------------------------------------------------------------
-        network = SceneDiffuserMiDiffusion()
+        pretrained_path = self.config.midiffusion.checkpoint_path
+        midiff_cfg_path = getattr(getattr(self.config, "midiffusion", None), "config_path", None)
+        if midiff_cfg_path and not os.path.isabs(midiff_cfg_path):
+            midiff_cfg_path = os.path.join(project_root, midiff_cfg_path)
+
+        if not midiff_cfg_path or not os.path.exists(midiff_cfg_path):
+            ckpt_dir = os.path.dirname(pretrained_path) if pretrained_path else ""
+            fallback_cfg = os.path.join(ckpt_dir, "config.yaml") if ckpt_dir else ""
+            if fallback_cfg and os.path.exists(fallback_cfg):
+                midiff_cfg_path = fallback_cfg
+            else:
+                raise FileNotFoundError(
+                    "MiDiffusion config not found. Set midiffusion.config_path "
+                    "or place config.yaml next to the checkpoint."
+                )
+
+        with open(midiff_cfg_path, "r") as f:
+            midiff_cfg = yaml.load(f, Loader=Loader)
+
+        def _update_data_file_paths(config_data):
+            config_data = dict(config_data)
+            config_data["dataset_directory"] = config_data["dataset_directory"].strip()
+            config_data["annotation_file"] = config_data["annotation_file"].strip()
+            if not os.path.isabs(config_data["dataset_directory"]):
+                config_data["dataset_directory"] = os.path.join(
+                    project_root, "3d_layout_generation/ThreedFront/output/3d_front_processed/", config_data["dataset_directory"]
+                )
+            if not os.path.isabs(config_data["annotation_file"]):
+                config_data["annotation_file"] = os.path.join(
+                    project_root, "3d_layout_generation/ThreedFront/dataset_files/", config_data["annotation_file"]
+                )
+            return config_data
+
+        data_cfg = _update_data_file_paths(midiff_cfg["data"])
+        encoded_dataset = get_encoded_dataset(
+            data_cfg,
+            path_to_bounds=None,
+            augmentations=data_cfg.get("augmentations", None),
+            split=["train", "val"],
+            max_length=midiff_cfg["network"]["sample_num_points"],
+            include_room_mask=(
+                midiff_cfg["network"].get("room_mask_condition", False)
+                and midiff_cfg.get("feature_extractor", {}).get("name") == "resnet18"
+            ),
+        )
+        class_dim = int(encoded_dataset.n_object_types) + 1
+        network = build_scene_diffuser(midiff_cfg, class_dim)
 
         # ------------------------------------------------------------------
         # 2. Load pretrained checkpoint (optional)
         # ------------------------------------------------------------------
-        pretrained_path = self.config.midiffusion.checkpoint_path
         if pretrained_path and os.path.exists(pretrained_path):
             state = torch.load(pretrained_path, map_location=device)
             network.load_state_dict(state)

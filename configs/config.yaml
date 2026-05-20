@@ -47,6 +47,7 @@ tv_bed: false
 threed_reward: "penetration"
 # Universal + custom reward composition
 universal_rewards: false
+universal_reward_components: null  # null uses default; e.g. ["penetration", "boundary"]
 custom_reward: null  # null, "tv_bed", or ["tv_bed", "another_reward"]
 object_count_mode: "nll"  # kl, nll, gaussian
 # Pretrained model (2D - Stable Diffusion)
@@ -61,7 +62,7 @@ midiffusion:
   floor_conditions: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/room_features.json"
   floor_polygons_path: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/floor_polygons_test.json"
   floor_geometry_path: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/floor_geometry_test.json"
-  config_path: "3d_layout_generation/MiDiffusion/config.yaml"
+  config_path: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/config.yaml"
   checkpoint_path: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/3d_b2diff/b2diff/3d_layout_generation/MiDiffusion/output/log/pretrained_3d_layout_custom_attn/best_model.pt"
   dataset_directory: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/steerable-scene-generation/MiData/bedroom"
   annotation_file: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/ThreedFront/dataset_files/bedroom_threed_front_splits_original.csv"

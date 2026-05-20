@@ -117,6 +117,47 @@ def _custom_reward_mode_name(custom_reward_names):
     return "custom_multi_" + "__".join(custom_reward_names)
 
 
+def _normalize_universal_reward_components(components):
+    if components is None:
+        return None
+
+    if isinstance(components, str):
+        components_list = [components]
+    elif isinstance(components, (list, tuple)) or (
+        hasattr(components, "__iter__")
+        and not isinstance(components, (dict, bytes, bytearray))
+    ):
+        components_list = list(components)
+    else:
+        raise ValueError(
+            "universal_reward_components must be null, a string, or a list of strings."
+        )
+
+    allowed = {"penetration", "boundary", "accessibility", "object_count"}
+    normalized = []
+    seen = set()
+    for name in components_list:
+        if not isinstance(name, str):
+            raise ValueError("Each universal reward component must be a string.")
+        cleaned = name.strip()
+        if not cleaned:
+            raise ValueError("Universal reward component names cannot be empty.")
+        if cleaned not in allowed:
+            raise ValueError(
+                f"Unknown universal reward component '{cleaned}'. Allowed: {sorted(allowed)}."
+            )
+        if cleaned not in seen:
+            normalized.append(cleaned)
+            seen.add(cleaned)
+    return normalized
+
+
+def _universal_reward_mode_name(components, default_components):
+    if components is None or components == default_components:
+        return "universal"
+    return "universal_" + "__".join(components)
+
+
 def _get_sdf_cache(config):
     cache_dir = "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/steerable-scene-generation/bedroom_sdf_cache/"
     grid_resolution = 0.05
@@ -340,26 +381,41 @@ def _compute_threed_reward_components(parsed, config, room_type, indices=None, f
         return total_reward, components, _custom_reward_mode_name(custom_reward_names)
 
     if use_universal:
-        if indices is None:
-            raise ValueError("indices must be provided when universal_rewards=true.")
+        default_components = ["penetration", "boundary", "accessibility"]
+        requested_components = _normalize_universal_reward_components(
+            getattr(config, "universal_reward_components", None)
+        )
+        universal_components = requested_components or default_components
 
-        accessibility_cache = _get_accessibility_cache(config)
-        components["penetration"] = compute_non_penetration_reward(
-            parsed, room_type=room_type
-        )
-        components["boundary"] = compute_boundary_violation_reward(
-            parsed,
-            floor_polygons=floor_polygons,
-        )
-        # components["object_count"] = compute_object_count_reward(
-        #     parsed, mode=object_count_mode
-        # )
-        components["accessibility"] = compute_accessibility_reward(
-            parsed,
-            indices=indices,
-            accessibility_cache=accessibility_cache,
-            room_type=room_type,
-        )
+        if "accessibility" in universal_components and indices is None:
+            raise ValueError(
+                "indices must be provided when universal_rewards=true and accessibility is enabled."
+            )
+
+        if "penetration" in universal_components:
+            components["penetration"] = compute_non_penetration_reward(
+                parsed, room_type=room_type
+            )
+
+        if "boundary" in universal_components:
+            components["boundary"] = compute_boundary_violation_reward(
+                parsed,
+                floor_polygons=floor_polygons,
+            )
+
+        if "object_count" in universal_components:
+            components["object_count"] = compute_object_count_reward(
+                parsed, mode=object_count_mode
+            )
+
+        if "accessibility" in universal_components:
+            accessibility_cache = _get_accessibility_cache(config)
+            components["accessibility"] = compute_accessibility_reward(
+                parsed,
+                indices=indices,
+                accessibility_cache=accessibility_cache,
+                room_type=room_type,
+            )
 
         # Custom reward can be optionally added on top of universal rewards.
         for reward_name in custom_reward_names:
@@ -374,7 +430,9 @@ def _compute_threed_reward_components(parsed, config, room_type, indices=None, f
             )
 
         total_reward = sum(components.values())
-        return total_reward, components, "universal"
+        return total_reward, components, _universal_reward_mode_name(
+            universal_components, default_components
+        )
 
     # Backward-compatible single reward mode (legacy behavior)
     if threed_reward is None:
@@ -444,9 +502,10 @@ def threed_score_fn(x0_raw, save_dir, config, indices=None, floor_polygons=None,
         )
         R = R.cpu()
 
-    if reward_mode == "universal":
-        scores_filename = "universal_scores.pkl"
-        history_file_name = "history_universal_scores.pkl"
+    if reward_mode == "universal" or reward_mode.startswith("universal_"):
+        base_name = reward_mode
+        scores_filename = f"{base_name}_scores.pkl"
+        history_file_name = f"history_{base_name}_scores.pkl"
     elif reward_mode.startswith("custom_"):
         custom_name = reward_mode[len("custom_"):]
         scores_filename = f"custom_{custom_name}_scores.pkl"
@@ -502,7 +561,7 @@ def threed_score_fn(x0_raw, save_dir, config, indices=None, floor_polygons=None,
         metrics['grpo/within_group_std_max']  = float(np.max(within_std)) if within_std else 0.0
 
         metrics['component/total_raw_mean'] = float(R.mean())
-        if reward_mode == "universal":
+        if reward_mode == "universal" or reward_mode.startswith("universal_"):
             universal_components = [
                 component_values
                 for component_name, component_values in reward_components.items()
@@ -551,7 +610,7 @@ def threed_score_fn(x0_raw, save_dir, config, indices=None, floor_polygons=None,
     # Explicit total composed raw mean (sum of universal components + optional custom).
     metrics['component/total_raw_mean'] = float(R.mean())
     # Universal-only composed total (excludes any optional custom reward).
-    if reward_mode == "universal":
+    if reward_mode == "universal" or reward_mode.startswith("universal_"):
         universal_components = [
             component_values
             for component_name, component_values in reward_components.items()
@@ -938,7 +997,14 @@ def run_selection(config, stage_idx=None, logger=None, wandb_run=None):
             getattr(config, 'custom_reward', None)
         )
         if getattr(config, 'universal_rewards', False):
-            reward_mode = 'universal'
+            default_components = ["penetration", "boundary", "accessibility"]
+            requested_components = _normalize_universal_reward_components(
+                getattr(config, "universal_reward_components", None)
+            )
+            reward_mode = _universal_reward_mode_name(
+                requested_components or default_components,
+                default_components,
+            )
             if len(custom_reward_names) > 0:
                 reward_mode = f"{reward_mode}+{'+'.join(custom_reward_names)}"
         elif len(custom_reward_names) > 0:
