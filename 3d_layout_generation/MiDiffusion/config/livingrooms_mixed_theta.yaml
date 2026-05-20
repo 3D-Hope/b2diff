@@ -1,8 +1,9 @@
 data:
     dataset_type: "cached_threedfront"
-    encoding_type: "cached_diffusion_cosin_angle_wocm"
-    dataset_directory: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/steerable-scene-generation/MiData/bedroom"
-    annotation_file: "bedroom_threed_front_splits.csv"
+    # No "cosin_angle" -> Scale encoder: scalar yaw theta in [-1, 1] (linear from bounds)
+    encoding_type: "cached_diffusion_wocm"
+    dataset_directory: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/steerable-scene-generation/MiData/livingroom"
+    annotation_file: "livingroom_threed_front_splits.csv"
     augmentations: ["fixed_rotations"]
     train_stats: "dataset_stats.txt"
     room_layout_size: "64,64"
@@ -11,8 +12,8 @@ network:
     type: "diffusion_scene_layout_mixed"
 
     # encoding dim
-    sample_num_points: 12 # max_length 
-    angle_dim: 2 
+    sample_num_points: 21 # max_length
+    angle_dim: 1
 
     # room mask condition
     room_mask_condition: true
@@ -25,7 +26,7 @@ network:
     # diffusion config
     time_num: 1000
     diffusion_semantic_kwargs:
-        att_1: 0.99999 
+        att_1: 0.99999
         att_T: 0.000009
         ctt_1: 0.000009
         ctt_T: 0.99999
@@ -60,7 +61,7 @@ feature_extractor:
 
 training:
     splits: ["train", "val"]
-    epochs: 50000
+    epochs: 100000
     batch_size: 512
     save_frequency: 2000
     max_grad_norm: 10
@@ -70,7 +71,7 @@ training:
     # schedule
     schedule: 'step'
     lr: 0.0002
-    lr_step: 10000
+    lr_step: 15000
     lr_decay: 0.5
 
 validation:

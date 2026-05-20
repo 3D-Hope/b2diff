@@ -1,6 +1,6 @@
 data:
     dataset_type: "cached_threedfront"
-    encoding_type: "cached_diffusion_cosin_angle_wocm"
+    encoding_type: "cached_diffusion_wocm"
     dataset_directory: "/media/ajad/YourBook/AshokSaugatResearchBackup/AshokSaugatResearch/steerable-scene-generation/MiData/bedroom"
     annotation_file: "bedroom_threed_front_splits.csv"
     augmentations: ["fixed_rotations"]
@@ -10,22 +10,18 @@ data:
 network:
     type: "diffusion_scene_layout_mixed"
 
-    # encoding dim
-    sample_num_points: 12 # max_length 
-    angle_dim: 2 
+    sample_num_points: 12  # bedroom max_objects (was 21 livingroom default)
+    angle_dim: 1
 
-    # room mask condition
     room_mask_condition: true
     room_latent_dim: 64
 
-    # position condition
     position_condition: false
     position_emb_dim: 0
 
-    # diffusion config
     time_num: 1000
     diffusion_semantic_kwargs:
-        att_1: 0.99999 
+        att_1: 0.99999
         att_T: 0.000009
         ctt_1: 0.000009
         ctt_T: 0.99999
@@ -41,7 +37,6 @@ network:
         model_mean_type: 'eps'
         model_var_type: 'fixedsmall'
 
-    # denoising net
     net_type: "transformer"
     net_kwargs:
         seperate_all: True
@@ -64,10 +59,8 @@ training:
     batch_size: 512
     save_frequency: 2000
     max_grad_norm: 10
-    # optimizer
     optimizer: Adam
     weight_decay: 0.0
-    # schedule
     schedule: 'step'
     lr: 0.0002
     lr_step: 10000
